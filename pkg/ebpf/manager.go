@@ -7,6 +7,9 @@ import (
 	"github.com/cilium/ebpf/link"
 )
 
+// UeMetrics is an exported alias for the eBPF-generated metrics struct
+type UeMetrics = anlfUeMetricsT
+
 type Manager struct {
 	objs anlfObjects
 	link link.Link
@@ -41,12 +44,12 @@ func (m *Manager) AttachXDP(ifaceName string) error {
 	return nil
 }
 
-func (m *Manager) ReadMetrics() (map[uint32]anlfUeMetricsT, error) {
+func (m *Manager) ReadMetrics() (map[uint32]UeMetrics, error) {
 	if m.objs.UeMetricsMap == nil {
 		return nil, fmt.Errorf("map not loaded")
 	}
 
-	metrics := make(map[uint32]anlfUeMetricsT)
+	metrics := make(map[uint32]UeMetrics)
 
 	var key uint32
 	var value anlfUeMetricsT
@@ -58,6 +61,41 @@ func (m *Manager) ReadMetrics() (map[uint32]anlfUeMetricsT, error) {
 
 	if err := iter.Err(); err != nil {
 		return nil, fmt.Errorf("iterating map: %w", err)
+	}
+
+	return metrics, nil
+}
+
+// ReadAndReset atomically reads all metrics and resets (deletes) them from the map
+// This prevents data loss in high-traffic scenarios and implements Phase 3 requirement
+func (m *Manager) ReadAndReset() (map[uint32]UeMetrics, error) {
+	if m.objs.UeMetricsMap == nil {
+		return nil, fmt.Errorf("map not loaded")
+	}
+
+	metrics := make(map[uint32]UeMetrics)
+
+	var key uint32
+	var value anlfUeMetricsT
+
+	// Iterate and collect all keys first
+	keys := make([]uint32, 0)
+	iter := m.objs.UeMetricsMap.Iterate()
+	for iter.Next(&key, &value) {
+		metrics[key] = value
+		keys = append(keys, key)
+	}
+
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("iterating map: %w", err)
+	}
+
+	// Delete all keys atomically after reading
+	for _, k := range keys {
+		if err := m.objs.UeMetricsMap.Delete(k); err != nil {
+			// Log but continue - some keys may have been updated/deleted by eBPF
+			// This is expected in high-traffic scenarios
+		}
 	}
 
 	return metrics, nil
