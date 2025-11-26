@@ -42,7 +42,17 @@ struct ue_metrics_t {
     // 0 = 沒打, 1 = 有打。最後算有幾個 bit 是 1。
     u64 dst_bitmap;    
 };
+```
 
+```C
+// 2. 定義 Map
+// 使用 HASH Map，因為 IP 不一定是連續的，且數量未定
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);                // Key: Inner Source IP (Network Byte Order)
+    __type(value, struct ue_metrics_t); // Value: 你的統計數據
+    __uint(max_entries, 10240);        // 支援最多 10k 個併發 UE
+} ue_metrics_map SEC(".maps");
 ```
 
 ## 環境確認

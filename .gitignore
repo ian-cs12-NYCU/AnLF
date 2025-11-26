@@ -5,6 +5,11 @@ bin/
 *.so
 *.dylib
 
+# eBPF generated files
+bpf/vmlinux.h
+pkg/ebpf/anlf_bpf.go
+pkg/ebpf/anlf_bpf.o
+
 # Test binary
 *.test
 
