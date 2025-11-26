@@ -1,0 +1,37 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of go build
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+log/
+*.log
+
+# Output data
+output/
+*.csv
+
+# Dependencies
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+create_files.sh
