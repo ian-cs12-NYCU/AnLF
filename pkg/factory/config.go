@@ -40,11 +40,17 @@ type Configuration struct {
 	NrfUri          string               `yaml:"nrfUri" valid:"url,required"`
 	NrfCertPem      string               `yaml:"nrfCertPem,omitempty" valid:"optional"`
 	Recording       *Recording           `yaml:"recording,omitempty" valid:"optional"`
+	Ebpf            *Ebpf                `yaml:"ebpf,omitempty" valid:"optional"`
 }
 
 type Recording struct {
 	Enable bool   `yaml:"enable" valid:"type(bool)"`
 	Output string `yaml:"output" valid:"type(string)"`
+}
+
+type Ebpf struct {
+	Enable    bool   `yaml:"enable" valid:"type(bool)"`
+	Interface string `yaml:"interface" valid:"type(string)"`
 }
 
 type Logger struct {
@@ -269,4 +275,19 @@ func (c *Config) GetRecordingOutput() string {
 		return c.Configuration.Recording.Output
 	}
 	return "./output/data.csv"
+}
+
+func (c *Config) GetEbpfEnabled() bool {
+	c.RLock()
+	defer c.RUnlock()
+	return c.Configuration != nil && c.Configuration.Ebpf != nil && c.Configuration.Ebpf.Enable
+}
+
+func (c *Config) GetEbpfInterface() string {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.Ebpf != nil && c.Configuration.Ebpf.Interface != "" {
+		return c.Configuration.Ebpf.Interface
+	}
+	return "upfgtp"
 }

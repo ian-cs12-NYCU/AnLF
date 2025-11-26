@@ -17,6 +17,10 @@ configuration:
   recording:
     enable: false
     output: ./output/data.csv
+  
+  ebpf:
+    enable: true
+    interface: upfgtp
 
 logger:
   enable: true

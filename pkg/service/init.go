@@ -16,6 +16,7 @@ import (
 	"github.com/free5gc/anlf/internal/sbi/consumer"
 	"github.com/free5gc/anlf/internal/sbi/processor"
 	"github.com/free5gc/anlf/pkg/app"
+	"github.com/free5gc/anlf/pkg/ebpf"
 	"github.com/free5gc/anlf/pkg/factory"
 )
 
@@ -58,6 +59,23 @@ func NewApp(ctx context.Context, cfg *factory.Config, tlsKeyLogPath string) (*An
 
 	nf.ctx, nf.cancel = context.WithCancel(ctx)
 	nf.lifecycleManager = app.NewLifecycleManager(nf.ctx)
+
+	// Initialize eBPF component if enabled
+	if cfg.GetEbpfEnabled() {
+		iface := cfg.GetEbpfInterface()
+		logger.MainLog.Infof("eBPF enabled for interface: %s", iface)
+		
+		ebpfComponent, err := ebpf.NewComponent(iface)
+		if err != nil {
+			logger.MainLog.Errorf("Failed to create eBPF component: %v", err)
+			return nf, err
+		}
+		
+		nf.lifecycleManager.Register(ebpfComponent)
+		logger.MainLog.Infof("eBPF component registered to lifecycle manager")
+	} else {
+		logger.MainLog.Infof("eBPF is disabled in configuration")
+	}
 
 	sbiServer, errServer := sbi.NewServer(nf, tlsKeyLogPath)
 	if errServer != nil {
@@ -145,6 +163,11 @@ func (a *AnlfApp) Start() {
 		}
 	}()
 
+	// Start lifecycle managed components (e.g., eBPF)
+	if err := a.lifecycleManager.StartAll(); err != nil {
+		logger.MainLog.Fatalf("Failed to start lifecycle components: %+v", err)
+	}
+
 	// Start SBI server
 	if err := a.sbiServer.Run(context.Background(), &a.wg); err != nil {
 		logger.MainLog.Fatalf("Run SBI server failed: %+v", err)
@@ -154,7 +177,10 @@ func (a *AnlfApp) Start() {
 	a.wg.Add(1)
 	go a.listenShutdown()
 
-	// Wait for all goroutines
+	// Wait for shutdown signal (blocking until context is cancelled)
+	<-a.ctx.Done()
+	
+	// Now wait for all goroutines to finish
 	a.WaitRoutineStopped()
 }
 
