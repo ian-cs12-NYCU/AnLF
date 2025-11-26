@@ -10,14 +10,18 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/free5gc/anlf/internal/analyzer"
+	"github.com/free5gc/anlf/internal/analyzer/exporter"
 	nf_context "github.com/free5gc/anlf/internal/context"
 	"github.com/free5gc/anlf/internal/logger"
+	"github.com/free5gc/anlf/internal/monitor"
 	"github.com/free5gc/anlf/internal/sbi"
 	"github.com/free5gc/anlf/internal/sbi/consumer"
 	"github.com/free5gc/anlf/internal/sbi/processor"
 	"github.com/free5gc/anlf/pkg/app"
 	"github.com/free5gc/anlf/pkg/ebpf"
 	"github.com/free5gc/anlf/pkg/factory"
+	"github.com/free5gc/anlf/pkg/models"
 )
 
 type ANLF interface {
@@ -39,6 +43,7 @@ type AnlfApp struct {
 	processor        *processor.Processor
 	lifecycleManager *app.LifecycleManager
 	shutdownTimeout  time.Duration
+	ebpfComponent    *ebpf.Component
 }
 
 var _ app.App = &AnlfApp{}
@@ -64,13 +69,14 @@ func NewApp(ctx context.Context, cfg *factory.Config, tlsKeyLogPath string) (*An
 	if cfg.GetEbpfEnabled() {
 		iface := cfg.GetEbpfInterface()
 		logger.MainLog.Infof("eBPF enabled for interface: %s", iface)
-		
+
 		ebpfComponent, err := ebpf.NewComponent(iface)
 		if err != nil {
 			logger.MainLog.Errorf("Failed to create eBPF component: %v", err)
 			return nf, err
 		}
-		
+
+		nf.ebpfComponent = ebpfComponent
 		nf.lifecycleManager.Register(ebpfComponent)
 		logger.MainLog.Infof("eBPF component registered to lifecycle manager")
 	} else {
@@ -94,6 +100,14 @@ func NewApp(ctx context.Context, cfg *factory.Config, tlsKeyLogPath string) (*An
 		return nf, err
 	}
 	nf.processor = processor
+
+	// Initialize monitoring pipeline if enabled
+	if cfg.GetMonitoringEnabled() && nf.ebpfComponent != nil {
+		if err := nf.initMonitoringPipeline(); err != nil {
+			logger.MainLog.Errorf("Failed to initialize monitoring pipeline: %v", err)
+			return nf, err
+		}
+	}
 
 	return nf, nil
 }
@@ -179,7 +193,7 @@ func (a *AnlfApp) Start() {
 
 	// Wait for shutdown signal (blocking until context is cancelled)
 	<-a.ctx.Done()
-	
+
 	// Now wait for all goroutines to finish
 	a.WaitRoutineStopped()
 }
@@ -256,4 +270,48 @@ func (a *AnlfApp) GetLifecycleManager() *app.LifecycleManager {
 func (a *AnlfApp) SetShutdownTimeout(timeout time.Duration) {
 	logger.MainLog.Infof("Shutdown timeout set to %v", timeout)
 	a.shutdownTimeout = timeout
+}
+
+// initMonitoringPipeline initializes the data pipeline (Monitor -> Analyzer -> Exporter)
+func (a *AnlfApp) initMonitoringPipeline() error {
+	logger.MainLog.Info("Initializing monitoring pipeline...")
+
+	// Create feature channel
+	featureChan := make(chan *models.UeTrafficRecord, 1024)
+
+	// Initialize Mock SMF client
+	smfClient := consumer.NewMockSMF()
+	ueTablePath := a.cfg.GetMonitoringUeTablePath()
+	if err := smfClient.LoadUeTable(ueTablePath); err != nil {
+		return err
+	}
+
+	// Create exporter based on recording config
+	var exp exporter.Exporter
+	if a.cfg.GetRecordingStatus() {
+		outputPath := a.cfg.GetRecordingOutput()
+		var err error
+		exp, err = exporter.NewCsvExporter(outputPath)
+		if err != nil {
+			return err
+		}
+		logger.MainLog.Infof("Recording enabled: %s", outputPath)
+	} else {
+		// TODO: Implement LlmExporter for inference mode
+		logger.MainLog.Warnf("Recording disabled - using stub exporter")
+		exp = exporter.NewStubExporter()
+	}
+
+	// Create FlowAnalyzer
+	flowAnalyzer := analyzer.NewFlowAnalyzer(featureChan, exp)
+	a.lifecycleManager.Register(flowAnalyzer)
+
+	// Create TrafficMonitor
+	ebpfManager := a.ebpfComponent.GetManager()
+	pollInterval := time.Duration(a.cfg.GetMonitoringPollInterval()) * time.Second
+	trafficMonitor := monitor.NewTrafficMonitor(ebpfManager, smfClient, featureChan, pollInterval)
+	a.lifecycleManager.Register(trafficMonitor)
+
+	logger.MainLog.Info("Monitoring pipeline initialized successfully")
+	return nil
 }

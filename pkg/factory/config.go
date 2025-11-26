@@ -41,6 +41,7 @@ type Configuration struct {
 	NrfCertPem      string               `yaml:"nrfCertPem,omitempty" valid:"optional"`
 	Recording       *Recording           `yaml:"recording,omitempty" valid:"optional"`
 	Ebpf            *Ebpf                `yaml:"ebpf,omitempty" valid:"optional"`
+	Monitoring      *Monitoring          `yaml:"monitoring,omitempty" valid:"optional"`
 }
 
 type Recording struct {
@@ -51,6 +52,12 @@ type Recording struct {
 type Ebpf struct {
 	Enable    bool   `yaml:"enable" valid:"type(bool)"`
 	Interface string `yaml:"interface" valid:"type(string)"`
+}
+
+type Monitoring struct {
+	Enable       bool   `yaml:"enable" valid:"type(bool)"`
+	PollInterval int    `yaml:"pollInterval" valid:"type(int)"` // in seconds
+	UeTablePath  string `yaml:"ueTablePath" valid:"type(string)"`
 }
 
 type Logger struct {
@@ -290,4 +297,28 @@ func (c *Config) GetEbpfInterface() string {
 		return c.Configuration.Ebpf.Interface
 	}
 	return "upfgtp"
+}
+
+func (c *Config) GetMonitoringEnabled() bool {
+	c.RLock()
+	defer c.RUnlock()
+	return c.Configuration != nil && c.Configuration.Monitoring != nil && c.Configuration.Monitoring.Enable
+}
+
+func (c *Config) GetMonitoringPollInterval() int {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.Monitoring != nil && c.Configuration.Monitoring.PollInterval > 0 {
+		return c.Configuration.Monitoring.PollInterval
+	}
+	return 1 // default 1 second
+}
+
+func (c *Config) GetMonitoringUeTablePath() string {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.Monitoring != nil && c.Configuration.Monitoring.UeTablePath != "" {
+		return c.Configuration.Monitoring.UeTablePath
+	}
+	return "./config/static_ue_list.json"
 }

@@ -21,7 +21,9 @@ var (
 	ProcessorLog *logrus.Entry
 	RecorderLog  *logrus.Entry
 
-	EbpfLog *logrus.Entry
+	EbpfLog     *logrus.Entry
+	MonitorLog  *logrus.Entry
+	AnalyzerLog *logrus.Entry
 )
 
 func init() {
@@ -43,4 +45,6 @@ func init() {
 	ProcessorLog = NfLog.WithField(logger_util.FieldCategory, "Processor")
 	RecorderLog = NfLog.WithField(logger_util.FieldCategory, "Recorder")
 	EbpfLog = NfLog.WithField(logger_util.FieldCategory, "eBPF")
+	MonitorLog = NfLog.WithField(logger_util.FieldCategory, "Monitor")
+	AnalyzerLog = NfLog.WithField(logger_util.FieldCategory, "Analyzer")
 }

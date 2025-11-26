@@ -21,6 +21,11 @@ configuration:
   ebpf:
     enable: true
     interface: upfgtp
+  
+  monitoring:
+    enable: true
+    pollInterval: 1
+    ueTablePath: /home/vagrant/AnLF/anlf/config/static_ue_list.json
 
 logger:
   enable: true

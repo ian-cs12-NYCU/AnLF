@@ -64,7 +64,7 @@ func (c *Component) Stop(timeout time.Duration) error {
 	}
 
 	logger.MainLog.Infof("Detaching XDP from interface %s...", c.iface)
-	
+
 	done := make(chan error, 1)
 	go func() {
 		done <- c.manager.Close()
