@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,17 +11,15 @@ import (
 )
 
 func TestCsvExporter_ExportAndShutdown(t *testing.T) {
-	tmpFile, err := os.CreateTemp("", "test_output_*.csv")
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "test_csv_*")
 	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
+		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-	os.Remove(tmpPath)
-	defer os.Remove(tmpPath)
+	defer os.RemoveAll(tmpDir)
 
-	// Create exporter
-	exp, err := NewCsvExporter(tmpPath)
+	// Create exporter (will create timestamped subdirectory)
+	exp, err := NewCsvExporter(tmpDir)
 	if err != nil {
 		t.Fatalf("NewCsvExporter failed: %v", err)
 	}
@@ -52,8 +51,23 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 		t.Fatalf("Shutdown failed: %v", err)
 	}
 
+	// Find the generated CSV file in timestamped subdirectory
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to read temp dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("Expected 1 subdirectory, got %d", len(entries))
+	}
+
+	sessionDir := filepath.Join(tmpDir, entries[0].Name())
+	csvFiles, err := filepath.Glob(filepath.Join(sessionDir, "traffic_*.csv"))
+	if err != nil || len(csvFiles) == 0 {
+		t.Fatalf("Failed to find CSV file in %s", sessionDir)
+	}
+
 	// Verify file content
-	content, err := os.ReadFile(tmpPath)
+	content, err := os.ReadFile(csvFiles[0])
 	if err != nil {
 		t.Fatalf("Failed to read output file: %v", err)
 	}

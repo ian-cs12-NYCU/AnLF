@@ -45,8 +45,8 @@ type Configuration struct {
 }
 
 type Recording struct {
-	Enable bool   `yaml:"enable" valid:"type(bool)"`
-	Output string `yaml:"output" valid:"type(string)"`
+	Enable    bool   `yaml:"enable" valid:"type(bool)"`
+	OutputDir string `yaml:"outputDir" valid:"type(string)"`
 }
 
 type Ebpf struct {
@@ -275,13 +275,13 @@ func (c *Config) GetRecordingStatus() bool {
 	return c.Configuration != nil && c.Configuration.Recording != nil && c.Configuration.Recording.Enable
 }
 
-func (c *Config) GetRecordingOutput() string {
+func (c *Config) GetRecordingOutputDir() string {
 	c.RLock()
 	defer c.RUnlock()
-	if c.Configuration != nil && c.Configuration.Recording != nil {
-		return c.Configuration.Recording.Output
+	if c.Configuration != nil && c.Configuration.Recording != nil && c.Configuration.Recording.OutputDir != "" {
+		return c.Configuration.Recording.OutputDir
 	}
-	return "./output/data.csv"
+	return "./output"
 }
 
 func (c *Config) GetEbpfEnabled() bool {

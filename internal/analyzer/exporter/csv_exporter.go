@@ -4,8 +4,10 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/free5gc/anlf/internal/logger"
 	"github.com/free5gc/anlf/pkg/models"
@@ -18,8 +20,18 @@ type CsvExporter struct {
 	mu     sync.Mutex
 }
 
-// NewCsvExporter creates a new CSV exporter
-func NewCsvExporter(filePath string) (*CsvExporter, error) {
+// NewCsvExporter creates a new CSV exporter with timestamped directory/file
+func NewCsvExporter(baseDir string) (*CsvExporter, error) {
+	// Generate timestamp-based path: baseDir/YYYYMMDD_HHMMSS/traffic_YYYYMMDD_HHMMSS.csv
+	timestamp := time.Now().Format("20060102_150405")
+	sessionDir := filepath.Join(baseDir, timestamp)
+
+	// Create session directory
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create session directory: %w", err)
+	}
+
+	filePath := filepath.Join(sessionDir, fmt.Sprintf("traffic_%s.csv", timestamp))
 	file, err := os.Create(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CSV file: %w", err)

@@ -1,55 +1,86 @@
 #!/bin/bash
+# ==============================================================================
+# AnLF eBPF Latency Measurement Tool (Delta Method)
+# ==============================================================================
+# Purpose: Measure average execution time of XDP program via cumulative stats.
+# Target:  Linux Kernel 5.1+ (Requires kernel.bpf_stats_enabled=1)
+# ==============================================================================
 
-# 設定你的 eBPF 程式名稱 (根據你的 C code 定義)
-# 通常 XDP 進入點函數名稱，例如 "xdp_prog_main" 或 "tc_ingress"
-PROG_NAME="xdp_parser_func" 
-
-# 測量持續時間 (秒)
+PROG_NAME="anlf_xdp_main"
 DURATION=10
 
-echo "🔍 正在尋找 eBPF 程式: $PROG_NAME ..."
+# ------------------------------------------------------------------------------
+# 1. Pre-flight Checks
+# ------------------------------------------------------------------------------
+echo "[*] Checking system configuration..."
 
-# 自動抓取 Program ID (使用 json 輸出解析較準確，這裡用 grep/awk 做 MVP 處理)
-# 注意：如果有這行指令抓不到，請手動 `bpftool prog list` 確認名稱
-PROG_ID=$(bpftool prog list | grep $PROG_NAME | awk '{print $1}' | tr -d ':')
+# Check if BPF stats are enabled
+STATS_ENABLED=$(sysctl -n kernel.bpf_stats_enabled 2>/dev/null)
+if [ "$STATS_ENABLED" != "1" ]; then
+    echo "[!] Error: kernel.bpf_stats_enabled is not set to 1."
+    echo "    Run: sudo sysctl -w kernel.bpf_stats_enabled=1"
+    exit 1
+fi
+
+# Find Program ID
+PROG_ID=$(bpftool prog list | grep "$PROG_NAME" | awk '{print $1}' | tr -d ':')
 
 if [ -z "$PROG_ID" ]; then
-    echo "❌ 找不到名為 $PROG_NAME 的程式，請確認 AnLF 是否已啟動。"
+    echo "[!] Error: Program '$PROG_NAME' not found."
     exit 1
 fi
 
-echo "✅ 找到 Program ID: $PROG_ID"
-echo "🚀 開始測量 Overhead (持續 $DURATION 秒)... 請確保背景流量 (100 UEs) 正在運行！"
+echo "[+] Target Program ID: $PROG_ID"
+echo "[+] Measurement Window: $DURATION seconds"
+echo "------------------------------------------------------------------------------"
 
-# 執行 Profile 並將結果存入變數
-# bpftool 輸出格式範例:
-#        8495 run_cnt
-#        4782084 run_time_ns
-OUTPUT=$(bpftool prog profile id $PROG_ID duration $DURATION 2>&1)
+# ------------------------------------------------------------------------------
+# 2. Capture Start State (T0)
+# ------------------------------------------------------------------------------
+echo "[*] Capturing baseline stats (T0)..."
+OUTPUT_START=$(bpftool prog show id $PROG_ID)
+START_NS=$(echo "$OUTPUT_START" | grep -o 'run_time_ns [0-9]*' | awk '{print $2}')
+START_CNT=$(echo "$OUTPUT_START" | grep -o 'run_cnt [0-9]*' | awk '{print $2}')
 
-# 解析輸出
-RUN_CNT=$(echo "$OUTPUT" | grep "run_cnt" | awk '{print $1}')
-RUN_TIME_NS=$(echo "$OUTPUT" | grep "run_time_ns" | awk '{print $1}')
+# ------------------------------------------------------------------------------
+# 3. Wait for Traffic
+# ------------------------------------------------------------------------------
+echo "[*] Waiting..."
+sleep $DURATION
 
-if [ -z "$RUN_CNT" ] || [ "$RUN_CNT" -eq 0 ]; then
-    echo "⚠️  警告: run_cnt 為 0。有沒有打流量？eBPF 沒有被觸發。"
-    exit 1
+# ------------------------------------------------------------------------------
+# 4. Capture End State (T1)
+# ------------------------------------------------------------------------------
+echo "[*] Capturing final stats (T1)..."
+OUTPUT_END=$(bpftool prog show id $PROG_ID)
+END_NS=$(echo "$OUTPUT_END" | grep -o 'run_time_ns [0-9]*' | awk '{print $2}')
+END_CNT=$(echo "$OUTPUT_END" | grep -o 'run_cnt [0-9]*' | awk '{print $2}')
+
+# ------------------------------------------------------------------------------
+# 5. Calculation
+# ------------------------------------------------------------------------------
+DELTA_NS=$((END_NS - START_NS))
+DELTA_CNT=$((END_CNT - START_CNT))
+
+echo "------------------------------------------------------------------------------"
+echo "MEASUREMENT RESULTS"
+echo "------------------------------------------------------------------------------"
+printf "%-25s : %d\n" "Delta Packets (Count)" "$DELTA_CNT"
+printf "%-25s : %d ns\n" "Delta Time (Total)" "$DELTA_NS"
+
+if [ "$DELTA_CNT" -eq 0 ]; then
+    echo "[!] Warning: No packets processed during the window."
+    echo "    Average latency cannot be calculated."
+else
+    # Calculate average (ns)
+    AVG_LATENCY=$(echo "scale=2; $DELTA_NS / $DELTA_CNT" | bc)
+    # Calculate average (us) for readability
+    AVG_LATENCY_US=$(echo "scale=4; $AVG_LATENCY / 1000" | bc)
+    
+    # Calculate PPS
+    PPS=$(echo "$DELTA_CNT / $DURATION" | bc)
+
+    printf "%-25s : %.2f ns (%.4f us)\n" "Avg Latency per Packet" "$AVG_LATENCY" "$AVG_LATENCY_US"
+    printf "%-25s : %d pps\n" "Throughput" "$PPS"
 fi
-
-# 計算平均延遲 (使用 bc 處理浮點數)
-AVG_LATENCY=$(echo "scale=2; $RUN_TIME_NS / $RUN_CNT" | bc)
-
-echo "------------------------------------------------"
-echo "📊 測量結果 (100 UEs Load)"
-echo "------------------------------------------------"
-echo "總執行次數 (Count) : $RUN_CNT"
-echo "總執行時間 (ns)    : $RUN_TIME_NS"
-echo "------------------------------------------------"
-echo "💡 平均單次執行延遲 : $AVG_LATENCY ns"
-echo "------------------------------------------------"
-
-# 論文數據解釋建議
-AVG_LATENCY_US=$(echo "scale=4; $AVG_LATENCY / 1000" | bc)
-echo "📝 論文論述參考:"
-echo "在 100 UEs 負載下，eBPF 平均處理延遲僅為 $AVG_LATENCY ns ($AVG_LATENCY_US μs)。"
-echo "相較於 1 秒 (1,000,000 μs) 的偵測視窗，Overhead 佔比極低。"
+echo "=============================================================================="

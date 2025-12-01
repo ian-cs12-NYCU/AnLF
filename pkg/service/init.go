@@ -289,13 +289,13 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 	// Create exporter based on recording config
 	var exp exporter.Exporter
 	if a.cfg.GetRecordingStatus() {
-		outputPath := a.cfg.GetRecordingOutput()
+		outputDir := a.cfg.GetRecordingOutputDir()
 		var err error
-		exp, err = exporter.NewCsvExporter(outputPath)
+		exp, err = exporter.NewCsvExporter(outputDir)
 		if err != nil {
 			return err
 		}
-		logger.MainLog.Infof("Recording enabled: %s", outputPath)
+		logger.MainLog.Infof("Recording enabled to directory: %s", outputDir)
 	} else {
 		// TODO: Implement LlmExporter for inference mode
 		logger.MainLog.Warnf("Recording disabled - using stub exporter")
