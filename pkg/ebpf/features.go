@@ -46,14 +46,14 @@ func ConvertToFeatures(m *anlfUeMetricsT, windowDuration float64) models.UeFeatu
 	_ = windowDuration // kept to show caller can pass windowDuration in future extensions
 
 	return models.UeFeatureVector{
-		LogPPS:    math.Round(logPPS*10000) / 10000,
-		AvgLen:    math.Round(avgLen*10000) / 10000,
-		IcmpRatio: math.Round(icmpRatio*10000) / 10000,
-		TcpRatio:  math.Round(tcpRatio*10000) / 10000,
-		UdpRatio:  math.Round(udpRatio*10000) / 10000,
-		SynRatio:  math.Round(synRatio*10000) / 10000,
-		RstRatio:  math.Round(rstRatio*10000) / 10000,
-		FlowRate:  math.Round(flowRate*10000) / 10000,
-		FanOut:    math.Round(fanOut*10000) / 10000,
+		LogPPS:      math.Round(logPPS*10000) / 10000,
+		AvgLen:      math.Round(avgLen*10000) / 10000,
+		IcmpRatio:   math.Round(icmpRatio*10000) / 10000,
+		TcpRatio:    math.Round(tcpRatio*10000) / 10000,
+		UdpRatio:    math.Round(udpRatio*10000) / 10000,
+		SynRatio:    math.Round(synRatio*10000) / 10000,
+		RstRatio:    math.Round(rstRatio*10000) / 10000,
+		NewFlowRate: math.Round(flowRate*10000) / 10000,
+		FanOut:      math.Round(fanOut*10000) / 10000,
 	}
 }

@@ -46,8 +46,8 @@ func NewCsvExporter(baseDir string) (*CsvExporter, error) {
 	// Write header
 	header := []string{
 		"timestamp", "supi", "ue_ip",
-		"log_pps", "avg_len", "tcp_ratio", "udp_ratio", "icmp_ratio",
-		"syn_ratio", "rst_ratio", "flow_rate", "fan_out",
+		"log_pps", "avg_len_bytes", "tcp_ratio", "udp_ratio", "icmp_ratio",
+		"syn_ratio", "rst_ratio", "new_flow_rate", "fan_out",
 	}
 	if err := writer.Write(header); err != nil {
 		file.Close()
@@ -75,7 +75,7 @@ func (e *CsvExporter) Export(rec *models.UeTrafficRecord) error {
 		fmt.Sprintf("%.4f", rec.IcmpRatio),
 		fmt.Sprintf("%.4f", rec.SynRatio),
 		fmt.Sprintf("%.4f", rec.RstRatio),
-		fmt.Sprintf("%.4f", rec.FlowRate),
+		fmt.Sprintf("%.4f", rec.NewFlowRate),
 		fmt.Sprintf("%.4f", rec.FanOut),
 	}
 

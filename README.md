@@ -72,10 +72,10 @@ configuration:
 
 ```bash
 # Basic run
-./bin/anlf -c config/anlfcfg.yaml
+sudo ./bin/anlf -c config/anlfcfg.yaml
 
 # With logging
-./bin/anlf -c config/anlfcfg.yaml -l log/anlf.log
+sudo ./bin/anlf -c config/anlfcfg.yaml -l log/anlf.log
 
 # Or use make
 make run

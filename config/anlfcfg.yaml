@@ -25,7 +25,7 @@ configuration:
   monitoring:
     enable: true
     pollInterval: 1
-    ueTablePath: /home/vagrant/AnLF/anlf/config/static_ue_list.json
+    ueTablePath: /home/vagrant/AnLF/anlf/config/static_ue_list_20.json
 
 logger:
   enable: true

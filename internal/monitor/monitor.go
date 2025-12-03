@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/free5gc/anlf/internal/logger"
@@ -98,26 +99,57 @@ func (m *TrafficMonitor) pollAndSend() {
 		return
 	}
 
-	if len(metrics) == 0 {
-		logger.MonitorLog.Infof("No traffic detected in this window (upfgtp interface)")
+	// Get all known UEs from SMF
+	allUeIps := m.smfClient.GetAllUeIps()
+
+	if len(allUeIps) == 0 {
+		logger.MonitorLog.Warnf("No UEs configured in SMF")
 		return
 	}
 
-	logger.MonitorLog.Infof("Collected %d UE metrics", len(metrics))
+	logger.MonitorLog.Infof("Processing %d known UEs (eBPF metrics for %d UEs)", len(allUeIps), len(metrics))
 
-	// Convert and send each UE's metrics
-	for ueIpNet, rawMetrics := range metrics {
-		ueIp := ebpf.IPFromNetByteOrder(ueIpNet).String()
+	// Send records for all UEs (either with metrics or zero-filled)
+	for _, ueIp := range allUeIps {
 		supi := m.smfClient.GetSupi(ueIp)
 
-		record := ConvertToTrafficRecord(ueIp, supi, &rawMetrics, m.windowSeconds)
+		var record *models.UeTrafficRecord
+
+		// Try to find metrics for this UE
+		rawMetrics, hasMetrics := metrics[ipToUint32(ueIp)]
+
+		if hasMetrics {
+			// UE has traffic in this window
+			record = ConvertToTrafficRecord(ueIp, supi, &rawMetrics, m.windowSeconds)
+		} else {
+			// UE has no traffic in this window - create zero-filled record
+			record = &models.UeTrafficRecord{
+				UeFeatureVector: models.UeFeatureVector{}, // All fields default to 0
+				Timestamp:       time.Now().Unix(),
+				Supi:            supi,
+				UeIp:            ueIp,
+			}
+		}
 
 		// Non-blocking send
 		select {
 		case m.featureChan <- record:
-			logger.MonitorLog.Infof("Sent traffic record for UE %s (SUPI: %s)", ueIp, supi)
+			logger.MonitorLog.Debugf("Sent traffic record for UE %s (SUPI: %s)", ueIp, supi)
 		default:
 			logger.MonitorLog.Warnf("Feature channel full, dropping record for %s", ueIp)
 		}
 	}
+}
+
+// ipToUint32 converts an IP string to uint32 in network byte order format
+func ipToUint32(ipStr string) uint32 {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return 0
+	}
+	ip = ip.To4()
+	if ip == nil {
+		return 0
+	}
+	return uint32(ip[0]) | uint32(ip[1])<<8 | uint32(ip[2])<<16 | uint32(ip[3])<<24
 }

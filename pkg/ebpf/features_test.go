@@ -7,7 +7,7 @@ import (
 func TestConvertToFeatures_ZeroPackets(t *testing.T) {
 	m := &anlfUeMetricsT{}
 	fv := ConvertToFeatures(m, 1.0)
-	if fv.LogPPS != 0 || fv.AvgLen != 0 || fv.FlowRate != 0 || fv.FanOut != 0 {
+	if fv.LogPPS != 0 || fv.AvgLen != 0 || fv.NewFlowRate != 0 || fv.FanOut != 0 {
 		t.Fatalf("expected zero vector when PacketCount==0, got %+v", fv)
 	}
 }
@@ -39,8 +39,8 @@ func TestConvertToFeatures_Normal(t *testing.T) {
 		t.Fatalf("tcpRatio expected ~0.8, got %v", fv.TcpRatio)
 	}
 
-	if fv.FlowRate < 0.49 || fv.FlowRate > 0.51 {
-		t.Fatalf("flowRate expected ~0.5, got %v", fv.FlowRate)
+	if fv.NewFlowRate < 0.49 || fv.NewFlowRate > 0.51 {
+		t.Fatalf("newFlowRate expected ~0.5, got %v", fv.NewFlowRate)
 	}
 
 	expectedFanOut := float64(4) / 64.0
@@ -55,7 +55,7 @@ func TestConvertToFeatures_FlowRateCap(t *testing.T) {
 		NewFlowCount: 20, // ratio 2.0 -> should be capped to 1.0
 	}
 	fv := ConvertToFeatures(m, 1.0)
-	if fv.FlowRate != 1.0 {
-		t.Fatalf("flowRate expected capped 1.0, got %v", fv.FlowRate)
+	if fv.NewFlowRate != 1.0 {
+		t.Fatalf("newFlowRate expected capped 1.0, got %v", fv.NewFlowRate)
 	}
 }

@@ -60,3 +60,15 @@ func (m *MockSMF) GetUeCount() int {
 	defer m.mu.RUnlock()
 	return len(m.ueTable)
 }
+
+// GetAllUeIps returns a slice of all known UE IPs
+func (m *MockSMF) GetAllUeIps() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	ips := make([]string, 0, len(m.ueTable))
+	for ip := range m.ueTable {
+		ips = append(ips, ip)
+	}
+	return ips
+}

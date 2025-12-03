@@ -38,7 +38,7 @@ test:
 	@go test -v ./...
 
 run:
-	@./bin/anlf -c config/anlfcfg.yaml
+	@sudo ./bin/anlf -c config/anlfcfg.yaml
 
 run-log:
-	@./bin/anlf -c config/anlfcfg.yaml -l log/anlf.log
+	@sudo ./bin/anlf -c config/anlfcfg.yaml -l log/anlf.log
