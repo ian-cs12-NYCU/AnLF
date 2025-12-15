@@ -18,9 +18,14 @@ graph TB
         Monitor[TrafficMonitor<br/>週期性輪詢]
         Analyzer[FlowAnalyzer<br/>流量分析器]
         
-        subgraph "Exporters"
-            CSV[CsvExporter<br/>記錄模式]
-            Stub[StubExporter<br/>停用記錄]
+        subgraph "Export Pipeline"
+            Queue[ExportQueue<br/>Message Queue<br/>Multi-Worker]
+            Dispatcher[ExportDispatcher<br/>訊息分發器]
+            
+            subgraph "Exporters"
+                CSV[CsvExporter<br/>流量記錄]
+                LLM[LLM Exporter<br/>推論結果<br/>未來擴展]
+            end
         end
         
         SBI_Server[SBI Server<br/>Service Interface]
@@ -41,9 +46,10 @@ graph TB
     SMF -.->|UE Info<br/>IP-SUPI Mapping| Monitor
     
     Monitor -->|Feature Vectors<br/>via Channel| Analyzer
-    
-    Analyzer -->|EnableRecording=true| CSV
-    Analyzer -->|EnableRecording=false| Stub
+    Analyzer -->|Enqueue Message| Queue
+    Queue -->|Dispatch by Type| Dispatcher
+    Dispatcher -->|Traffic Record| CSV
+    Dispatcher -.->|Future: LLM Result| LLM
     
     AnLF -->|NF Registration| NRF
     
@@ -55,8 +61,10 @@ graph TB
     
     style eBPF fill:#ff9999
     style Monitor fill:#99ccff
-    style Analyzer fill:#99ff99
+    style Queue fill:#ffdd99
+    style Dispatcher fill:#ddff99
     style CSV fill:#ffcc99
+    style LLM fill:#ccccff,stroke-dasharray: 5 5
     style Stub fill:#dddddd
     style MTLF fill:#cc99ff
 ```
@@ -68,10 +76,13 @@ graph TB
 sequenceDiagram
     participant K as Kernel Space<br/>(eBPF Map)
     participant M as TrafficMonitor
-    participant C as Go Channel<br/>(Buffered)
+    participant C as Go Channel<br/>(Feature)
     participant A as FlowAnalyzer
-    participant E as Exporter<br/>(CSV/Stub)
-    participant F as CSV File
+    participant Q as ExportQueue<br/>(Message Queue)
+    participant W as Queue Workers<br/>(4 goroutines)
+    participant D as ExportDispatcher
+    participant E as Exporter<br/>(CSV/LLM)
+    participant F as Output File
     
     Note over K: 封包到達時<br/>累計統計數據
     
@@ -94,16 +105,33 @@ sequenceDiagram
     
     loop Analyzer Processing Loop
         C->>A: Receive Feature Vector
-        A->>E: Export(record)
+        A->>A: Create ExportMessage<br/>(Type + Data)
+        A->>Q: Enqueue(msg)
         
-        alt CsvExporter
-            E->>F: Write to CSV file
-        else StubExporter
-            E->>E: No-op (丟棄資料)
+        alt Queue Full
+            Q-->>A: Drop & Log warning
         end
     end
     
-    Note over A,E: Graceful Shutdown:<br/>Close channel → Flush & Close
+    par Worker Processing (Parallel)
+        loop Worker-1
+            Q->>W: Dequeue message
+            W->>D: Handle(msg)
+            D->>D: Route by msg.Type
+            
+            alt TrafficRecord
+                D->>E: CsvExporter.Export()
+                E->>F: Write CSV row
+            else LLMInference (Future)
+                D->>E: LlmExporter.Export()
+                E->>F: Write JSON/JSONL
+            end
+        end
+    and Worker-2..4
+        Note over W: 其他 3 個 workers<br/>同時並行處理
+    end
+    
+    Note over A,F: Graceful Shutdown:<br/>Stop → Drain Queue → Flush Files
 ```
 
 ## 3. eBPF 資料收集層 (eBPF Data Collection Layer)
@@ -187,7 +215,90 @@ graph TB
     style Calc7 fill:#ffffcc,stroke:#cccc00
 ```
 
-## 5. 雙模式運作流程 (Dual-Mode Operation)
+## 5. Message Queue 架構 (Export Message Queue Architecture)
+
+```mermaid
+%%{init: {'theme':'neutral'}}%%
+graph TB
+    subgraph "Producer"
+        FA[FlowAnalyzer<br/>生產者]
+    end
+    
+    subgraph "Message Queue System"
+        direction TB
+        Queue[ExportQueue<br/>Buffered Channel<br/>容量: 10000]
+        
+        subgraph "Workers"
+            W1[Worker 1]
+            W2[Worker 2]
+            W3[Worker 3]
+            W4[Worker 4]
+        end
+        
+        Monitor[Queue Monitor<br/>監控利用率]
+    end
+    
+    subgraph "Consumer (Dispatcher)"
+        Disp[ExportDispatcher<br/>訊息分發器]
+        
+        subgraph "Export Types"
+            TR[MessageType:<br/>TrafficRecord]
+            LLM[MessageType:<br/>LLMInference<br/>未來]
+        end
+    end
+    
+    subgraph "Exporters (Output)"
+        CSV[CsvExporter<br/>CSV 檔案]
+        JSON[LLM Exporter<br/>JSON/JSONL<br/>未來]
+    end
+    
+    FA -->|Enqueue| Queue
+    Queue -->|Distribute| W1
+    Queue -->|Distribute| W2
+    Queue -->|Distribute| W3
+    Queue -->|Distribute| W4
+    
+    W1 --> Disp
+    W2 --> Disp
+    W3 --> Disp
+    W4 --> Disp
+    
+    Monitor -.->|30s Report| Queue
+    
+    Disp -->|Route| TR
+    Disp -.->|Future| LLM
+    
+    TR --> CSV
+    LLM -.-> JSON
+    
+    style Queue fill:#ffdd99
+    style W1 fill:#ddffdd
+    style W2 fill:#ddffdd
+    style W3 fill:#ddffdd
+    style W4 fill:#ddffdd
+    style Disp fill:#ddff99
+    style TR fill:#99ccff
+    style LLM fill:#ccccff,stroke-dasharray: 5 5
+    style CSV fill:#ffcc99
+    style JSON fill:#ccccff,stroke-dasharray: 5 5
+```
+
+### Message Queue 特性
+- **高效能**: 使用 Go buffered channel，支援 10000 訊息緩衝
+- **並行處理**: 4 個 worker goroutines 並行處理訊息
+- **易擴展**: 透過 MessageType 輕鬆添加新的 export 類型
+- **好管理**: 內建監控，每 30 秒報告 queue 利用率
+
+### 訊息類型擴展範例
+```go
+// 現在：流量記錄
+MessageTypeTrafficRecord -> CsvExporter -> traffic_*.csv
+
+// 未來：LLM 推論結果
+MessageTypeLLMInference -> LlmExporter -> inference_*.jsonl
+```
+
+## 6. 雙模式運作流程 (Dual-Mode Operation)
 
 ```mermaid
 %%{init: {'theme':'neutral'}}%%
@@ -216,7 +327,7 @@ graph TB
     style NoOp fill:#eeeeee
 ```
 
-## 6. NWDAF 資料流 (NWDAF Data Flow)
+## 7. NWDAF 資料流 (NWDAF Data Flow)
 
 ```mermaid
 %%{init: {'theme':'neutral'}}%%
@@ -247,7 +358,7 @@ sequenceDiagram
     Note over MTLF: MTLF 提供經過 LoRA 微調的<br/>NF 負載預測模型
 ```
 
-## 7. 系統生命週期管理 (Lifecycle Management)
+## 8. 系統生命週期管理 (Lifecycle Management)
 
 ```mermaid
 %%{init: {'theme':'neutral'}}%%
@@ -280,7 +391,7 @@ stateDiagram-v2
     DeregisterNRF --> [*]
 ```
 
-## 8. 關鍵資料結構 (Key Data Structures)
+## 9. 關鍵資料結構 (Key Data Structures)
 
 ### eBPF Map Value (Kernel)
 ```c
@@ -317,7 +428,27 @@ type UeTrafficRecord struct {
 }
 ```
 
-## 9. 效能考量與設計決策
+### Export Message Structure
+```go
+type ExportMessage struct {
+    Type MessageType  // "traffic_record", "llm_inference", etc.
+    Data interface{}  // 實際資料內容
+}
+
+// 範例：流量記錄訊息
+{
+    Type: "traffic_record",
+    Data: &UeTrafficRecord{...}
+}
+
+// 未來：LLM 推論結果訊息
+{
+    Type: "llm_inference",
+    Data: &LLMInferenceResult{...}
+}
+```
+
+## 10. 效能考量與設計決策
 
 ### eBPF 層
 - **XDP Hook**: 在網路堆疊最早期攔截封包，延遲最低
@@ -329,9 +460,17 @@ type UeTrafficRecord struct {
 - **ReadAndReset()**: 原子讀取後清空，避免重複計數
 - **Buffered Channel**: 1024 容量緩衝，應對流量突發
 
+### Export Message Queue
+- **Large Buffer**: 10000 訊息容量，處理高流量突發
+- **Multi-Worker**: 4 個並行 goroutines，提升吞吐量
+- **Type-based Routing**: 根據 MessageType 動態分發到不同 exporter
+- **Graceful Drain**: 關閉時確保所有佇列訊息都被處理
+- **Monitoring**: 每 30 秒報告佇列利用率，超過 80% 發出警告
+
 ### 資料完整性
 - **Zero-filling**: 沒有流量的 UE 也會產生零值記錄
 - **Graceful Shutdown**: 確保 CSV 完整 flush，無資料遺失
+- **Queue Persistence**: 關閉時先停止生產者，再 drain 完所有訊息
 
 ---
 
@@ -349,9 +488,19 @@ type UeTrafficRecord struct {
 - **預測指標**: CPU Usage, Memory Usage, Load Level Average/Peak
 - **模型架構**: Flask Server + LoRA Fine-tuned Models
 
-### 資料流總結
+### 資料流總結 (更新版本)
 ```
-[封包流量] → [eBPF XDP] → [TrafficMonitor] → [Channel] → [FlowAnalyzer] → [Exporter]
-                                                                              ↓
-                                                                     [CSV 檔案] (用於訓練)
+[封包流量] → [eBPF XDP] → [TrafficMonitor] → [Feature Channel] → [FlowAnalyzer]
+                                                                        ↓
+                                                                   [ExportQueue]
+                                                                   (Message Queue)
+                                                                        ↓
+                                                      4 Workers → [ExportDispatcher]
+                                                                        ↓
+                                                              ┌─────────┴─────────┐
+                                                              ↓                   ↓
+                                                        [CsvExporter]      [LlmExporter]
+                                                              ↓                (未來)
+                                                        [CSV 檔案]
+                                                      (用於訓練/分析)
 ```

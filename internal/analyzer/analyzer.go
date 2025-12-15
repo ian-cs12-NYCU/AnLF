@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/free5gc/anlf/internal/analyzer/exporter"
+	"github.com/free5gc/anlf/internal/analyzer/queue"
 	"github.com/free5gc/anlf/internal/logger"
 	"github.com/free5gc/anlf/pkg/models"
 )
 
-// FlowAnalyzer receives traffic records and exports them
+// FlowAnalyzer receives traffic records and enqueues them for export
 type FlowAnalyzer struct {
 	featureChan <-chan *models.UeTrafficRecord
-	exporter    exporter.Exporter
+	exportQueue *queue.ExportQueue
 	stopChan    chan struct{}
 	doneChan    chan struct{}
 }
@@ -21,11 +21,11 @@ type FlowAnalyzer struct {
 // NewFlowAnalyzer creates a new flow analyzer
 func NewFlowAnalyzer(
 	featureChan <-chan *models.UeTrafficRecord,
-	exp exporter.Exporter,
+	exportQueue *queue.ExportQueue,
 ) *FlowAnalyzer {
 	return &FlowAnalyzer{
 		featureChan: featureChan,
-		exporter:    exp,
+		exportQueue: exportQueue,
 		stopChan:    make(chan struct{}),
 		doneChan:    make(chan struct{}),
 	}
@@ -33,7 +33,7 @@ func NewFlowAnalyzer(
 
 // Start implements Lifecycle.Start
 func (a *FlowAnalyzer) Start(ctx context.Context) error {
-	logger.AnalyzerLog.Infof("Starting FlowAnalyzer with exporter: %s", a.exporter.Name())
+	logger.AnalyzerLog.Info("Starting FlowAnalyzer with message queue")
 
 	go a.processLoop(ctx)
 
@@ -49,10 +49,6 @@ func (a *FlowAnalyzer) Stop(timeout time.Duration) error {
 
 	select {
 	case <-a.doneChan:
-		// Shutdown exporter
-		if err := a.exporter.Shutdown(); err != nil {
-			logger.AnalyzerLog.Errorf("Exporter shutdown error: %v", err)
-		}
 		logger.AnalyzerLog.Info("FlowAnalyzer stopped successfully")
 		return nil
 	case <-time.After(timeout):
@@ -88,9 +84,12 @@ func (a *FlowAnalyzer) processLoop(ctx context.Context) {
 
 func (a *FlowAnalyzer) processRecord(record *models.UeTrafficRecord) {
 	logger.AnalyzerLog.Infof("Received traffic record for UE %s (SUPI: %s)", record.UeIp, record.Supi)
-	if err := a.exporter.Export(record); err != nil {
-		logger.AnalyzerLog.Errorf("Failed to export record for %s: %v", record.UeIp, err)
+
+	// Create export message and enqueue
+	msg := queue.NewTrafficRecordMessage(record)
+	if err := a.exportQueue.Enqueue(msg); err != nil {
+		logger.AnalyzerLog.Errorf("Failed to enqueue record for %s: %v", record.UeIp, err)
 	} else {
-		logger.AnalyzerLog.Infof("Exported record for UE %s via %s", record.UeIp, a.exporter.Name())
+		logger.AnalyzerLog.Debugf("Enqueued traffic record for UE %s", record.UeIp)
 	}
 }

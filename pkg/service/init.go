@@ -11,7 +11,9 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/free5gc/anlf/internal/analyzer"
+	"github.com/free5gc/anlf/internal/analyzer/dispatcher"
 	"github.com/free5gc/anlf/internal/analyzer/exporter"
+	"github.com/free5gc/anlf/internal/analyzer/queue"
 	nf_context "github.com/free5gc/anlf/internal/context"
 	"github.com/free5gc/anlf/internal/logger"
 	"github.com/free5gc/anlf/internal/monitor"
@@ -44,6 +46,7 @@ type AnlfApp struct {
 	lifecycleManager *app.LifecycleManager
 	shutdownTimeout  time.Duration
 	ebpfComponent    *ebpf.Component
+	exportDispatcher *dispatcher.ExportDispatcher
 }
 
 var _ app.App = &AnlfApp{}
@@ -234,6 +237,13 @@ func (a *AnlfApp) terminateProcedure() {
 		if a.lifecycleManager != nil {
 			a.lifecycleManager.StopAll(5 * time.Second)
 		}
+
+		// Shutdown export dispatcher (closes all exporters)
+		if a.exportDispatcher != nil {
+			if err := a.exportDispatcher.Shutdown(); err != nil {
+				logger.MainLog.Errorf("ExportDispatcher shutdown error: %v", err)
+			}
+		}
 	}()
 
 	// Wait for shutdown or timeout
@@ -272,9 +282,9 @@ func (a *AnlfApp) SetShutdownTimeout(timeout time.Duration) {
 	a.shutdownTimeout = timeout
 }
 
-// initMonitoringPipeline initializes the data pipeline (Monitor -> Analyzer -> Exporter)
+// initMonitoringPipeline initializes the data pipeline (Monitor -> Analyzer -> Queue -> Dispatcher -> Exporters)
 func (a *AnlfApp) initMonitoringPipeline() error {
-	logger.MainLog.Info("Initializing monitoring pipeline...")
+	logger.MainLog.Info("Initializing monitoring pipeline with message queue...")
 
 	// Create feature channel
 	featureChan := make(chan *models.UeTrafficRecord, 1024)
@@ -287,11 +297,11 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 	}
 
 	// Create exporter based on recording config
-	var exp exporter.Exporter
+	var trafficExp exporter.Exporter
 	if a.cfg.GetRecordingStatus() {
 		outputDir := a.cfg.GetRecordingOutputDir()
 		var err error
-		exp, err = exporter.NewCsvExporter(outputDir)
+		trafficExp, err = exporter.NewCsvExporter(outputDir)
 		if err != nil {
 			return err
 		}
@@ -299,11 +309,19 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 	} else {
 		// TODO: Implement LlmExporter for inference mode
 		logger.MainLog.Warnf("Recording disabled - using stub exporter")
-		exp = exporter.NewStubExporter()
+		trafficExp = exporter.NewStubExporter()
 	}
 
-	// Create FlowAnalyzer
-	flowAnalyzer := analyzer.NewFlowAnalyzer(featureChan, exp)
+	// Create ExportDispatcher
+	a.exportDispatcher = dispatcher.NewExportDispatcher(trafficExp)
+
+	// Create ExportQueue with dispatcher as handler
+	queueConfig := queue.DefaultConfig()
+	exportQueue := queue.NewExportQueue(queueConfig, a.exportDispatcher)
+	a.lifecycleManager.Register(exportQueue)
+
+	// Create FlowAnalyzer with queue
+	flowAnalyzer := analyzer.NewFlowAnalyzer(featureChan, exportQueue)
 	a.lifecycleManager.Register(flowAnalyzer)
 
 	// Create TrafficMonitor
