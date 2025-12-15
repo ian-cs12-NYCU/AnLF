@@ -338,10 +338,11 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 
 	// 5. Create AnomalyDetector (if enabled)
 	anomalyDetectorCfg := detector.AnomalyDetectorConfig{
-		Enabled:      a.cfg.GetAnomalyDetectionEnabled(),
-		LLMServerURL: a.cfg.GetAnomalyDetectionServerURL(),
-		LLMTimeout:   time.Duration(a.cfg.GetAnomalyDetectionTimeout()) * time.Second,
-		QueueConfig:  queue.DefaultQueueConfig(),
+		Enabled:          a.cfg.GetAnomalyDetectionEnabled(),
+		LLMServerURL:     a.cfg.GetAnomalyDetectionServerURL(),
+		LLMTimeout:       time.Duration(a.cfg.GetAnomalyDetectionTimeout()) * time.Second,
+		SystemPromptPath: a.cfg.GetAnomalyDetectionSystemPromptPath(),
+		QueueConfig:      queue.DefaultQueueConfig(),
 	}
 
 	var err error

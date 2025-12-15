@@ -2,8 +2,9 @@ package models
 
 // InferenceRequest represents data sent to LLM server for anomaly detection
 type InferenceRequest struct {
-	Record    *UeTrafficRecord `json:"record"`
-	Timestamp int64            `json:"timestamp"`
+	SystemPrompt string           `json:"system_prompt,omitempty"` // System prompt for LLM
+	Record       *UeTrafficRecord `json:"record"`
+	Timestamp    int64            `json:"timestamp"`
 }
 
 // InferenceResult represents the result from LLM server

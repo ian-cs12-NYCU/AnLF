@@ -62,9 +62,10 @@ type Monitoring struct {
 }
 
 type AnomalyDetection struct {
-	Enable    bool   `yaml:"enable" valid:"type(bool)"`
-	ServerURL string `yaml:"serverUrl" valid:"url,optional"`
-	Timeout   int    `yaml:"timeout" valid:"type(int),optional"` // in seconds
+	Enable           bool   `yaml:"enable" valid:"type(bool)"`
+	ServerURL        string `yaml:"serverUrl" valid:"url,optional"`
+	Timeout          int    `yaml:"timeout" valid:"type(int),optional"`             // in seconds
+	SystemPromptPath string `yaml:"systemPromptPath" valid:"type(string),optional"` // path to system prompt file
 }
 
 type Logger struct {
@@ -352,4 +353,13 @@ func (c *Config) GetMonitoringUeTablePath() string {
 		return c.Configuration.Monitoring.UeTablePath
 	}
 	return "./config/static_ue_list.json"
+}
+
+func (c *Config) GetAnomalyDetectionSystemPromptPath() string {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.SystemPromptPath != "" {
+		return c.Configuration.AnomalyDetection.SystemPromptPath
+	}
+	return "./prompts/anomaly_detection_basic.txt" // default system prompt path
 }
