@@ -8,8 +8,8 @@ type MessageType string
 const (
 	// MessageTypeTrafficRecord for UE traffic data export
 	MessageTypeTrafficRecord MessageType = "traffic_record"
-	// MessageTypeLLMInference for LLM inference results export (future)
-	MessageTypeLLMInference MessageType = "llm_inference"
+	// MessageTypeInferenceResult for LLM inference results export
+	MessageTypeInferenceResult MessageType = "inference_result"
 )
 
 // ExportMessage is a generic message wrapper for different export types
@@ -30,4 +30,18 @@ func NewTrafficRecordMessage(record *models.UeTrafficRecord) *ExportMessage {
 func (m *ExportMessage) AsTrafficRecord() (*models.UeTrafficRecord, bool) {
 	rec, ok := m.Data.(*models.UeTrafficRecord)
 	return rec, ok
+}
+
+// NewInferenceResultMessage creates an export message for inference result
+func NewInferenceResultMessage(result *models.InferenceResult) *ExportMessage {
+	return &ExportMessage{
+		Type: MessageTypeInferenceResult,
+		Data: result,
+	}
+}
+
+// AsInferenceResult safely converts message data to InferenceResult
+func (m *ExportMessage) AsInferenceResult() (*models.InferenceResult, bool) {
+	result, ok := m.Data.(*models.InferenceResult)
+	return result, ok
 }

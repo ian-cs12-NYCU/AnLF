@@ -34,14 +34,15 @@ type Info struct {
 }
 
 type Configuration struct {
-	NfName          string               `yaml:"nfName,omitempty"`
-	Sbi             *Sbi                 `yaml:"sbi"`
-	ServiceNameList []models.ServiceName `yaml:"serviceNameList"`
-	NrfUri          string               `yaml:"nrfUri" valid:"url,required"`
-	NrfCertPem      string               `yaml:"nrfCertPem,omitempty" valid:"optional"`
-	Recording       *Recording           `yaml:"recording,omitempty" valid:"optional"`
-	Ebpf            *Ebpf                `yaml:"ebpf,omitempty" valid:"optional"`
-	Monitoring      *Monitoring          `yaml:"monitoring,omitempty" valid:"optional"`
+	NfName           string               `yaml:"nfName,omitempty"`
+	Sbi              *Sbi                 `yaml:"sbi"`
+	ServiceNameList  []models.ServiceName `yaml:"serviceNameList"`
+	NrfUri           string               `yaml:"nrfUri" valid:"url,required"`
+	NrfCertPem       string               `yaml:"nrfCertPem,omitempty" valid:"optional"`
+	Recording        *Recording           `yaml:"recording,omitempty" valid:"optional"`
+	Ebpf             *Ebpf                `yaml:"ebpf,omitempty" valid:"optional"`
+	Monitoring       *Monitoring          `yaml:"monitoring,omitempty" valid:"optional"`
+	AnomalyDetection *AnomalyDetection    `yaml:"anomalyDetection,omitempty" valid:"optional"`
 }
 
 type Recording struct {
@@ -58,6 +59,12 @@ type Monitoring struct {
 	Enable       bool   `yaml:"enable" valid:"type(bool)"`
 	PollInterval int    `yaml:"pollInterval" valid:"type(int)"` // in seconds
 	UeTablePath  string `yaml:"ueTablePath" valid:"type(string)"`
+}
+
+type AnomalyDetection struct {
+	Enable    bool   `yaml:"enable" valid:"type(bool)"`
+	ServerURL string `yaml:"serverUrl" valid:"url,optional"`
+	Timeout   int    `yaml:"timeout" valid:"type(int),optional"` // in seconds
 }
 
 type Logger struct {
@@ -312,6 +319,30 @@ func (c *Config) GetMonitoringPollInterval() int {
 		return c.Configuration.Monitoring.PollInterval
 	}
 	return 1 // default 1 second
+}
+
+func (c *Config) GetAnomalyDetectionEnabled() bool {
+	c.RLock()
+	defer c.RUnlock()
+	return c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.Enable
+}
+
+func (c *Config) GetAnomalyDetectionServerURL() string {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.ServerURL != "" {
+		return c.Configuration.AnomalyDetection.ServerURL
+	}
+	return "http://127.0.0.1:5000" // default LLM server URL
+}
+
+func (c *Config) GetAnomalyDetectionTimeout() int {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.Timeout > 0 {
+		return c.Configuration.AnomalyDetection.Timeout
+	}
+	return 5 // default 5 seconds
 }
 
 func (c *Config) GetMonitoringUeTablePath() string {

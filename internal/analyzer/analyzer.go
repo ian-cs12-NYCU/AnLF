@@ -10,28 +10,33 @@ import (
 	"github.com/free5gc/anlf/pkg/models"
 )
 
-// FlowAnalyzer receives traffic records and enqueues them for export
 type FlowAnalyzer struct {
-	featureChan <-chan *models.UeTrafficRecord
-	exportQueue *queue.ExportQueue
-	stopChan    chan struct{}
-	doneChan    chan struct{}
+	featureChan     <-chan *models.UeTrafficRecord
+	exportQueue     *queue.ExportQueue
+	anomalyDetector AnomalyDetector
+	stopChan        chan struct{}
+	doneChan        chan struct{}
 }
 
-// NewFlowAnalyzer creates a new flow analyzer
+type AnomalyDetector interface {
+	EnqueueRecord(record *models.UeTrafficRecord) error
+	IsEnabled() bool
+}
+
 func NewFlowAnalyzer(
 	featureChan <-chan *models.UeTrafficRecord,
 	exportQueue *queue.ExportQueue,
+	anomalyDetector AnomalyDetector,
 ) *FlowAnalyzer {
 	return &FlowAnalyzer{
-		featureChan: featureChan,
-		exportQueue: exportQueue,
-		stopChan:    make(chan struct{}),
-		doneChan:    make(chan struct{}),
+		featureChan:     featureChan,
+		exportQueue:     exportQueue,
+		anomalyDetector: anomalyDetector,
+		stopChan:        make(chan struct{}),
+		doneChan:        make(chan struct{}),
 	}
 }
 
-// Start implements Lifecycle.Start
 func (a *FlowAnalyzer) Start(ctx context.Context) error {
 	logger.AnalyzerLog.Info("Starting FlowAnalyzer with message queue")
 
@@ -41,7 +46,6 @@ func (a *FlowAnalyzer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop implements Lifecycle.Stop
 func (a *FlowAnalyzer) Stop(timeout time.Duration) error {
 	logger.AnalyzerLog.Info("Stopping FlowAnalyzer...")
 
@@ -56,7 +60,6 @@ func (a *FlowAnalyzer) Stop(timeout time.Duration) error {
 	}
 }
 
-// Name implements Lifecycle.Name
 func (a *FlowAnalyzer) Name() string {
 	return "FlowAnalyzer"
 }
@@ -85,11 +88,18 @@ func (a *FlowAnalyzer) processLoop(ctx context.Context) {
 func (a *FlowAnalyzer) processRecord(record *models.UeTrafficRecord) {
 	logger.AnalyzerLog.Infof("Received traffic record for UE %s (SUPI: %s)", record.UeIp, record.Supi)
 
-	// Create export message and enqueue
 	msg := queue.NewTrafficRecordMessage(record)
-	if err := a.exportQueue.Enqueue(msg); err != nil {
+	if err := a.exportQueue.EnqueueExport(msg); err != nil {
 		logger.AnalyzerLog.Errorf("Failed to enqueue record for %s: %v", record.UeIp, err)
 	} else {
 		logger.AnalyzerLog.Debugf("Enqueued traffic record for UE %s", record.UeIp)
+	}
+
+	if a.anomalyDetector != nil && a.anomalyDetector.IsEnabled() {
+		if err := a.anomalyDetector.EnqueueRecord(record); err != nil {
+			logger.AnalyzerLog.Errorf("Failed to enqueue for anomaly detection for %s: %v", record.UeIp, err)
+		} else {
+			logger.AnalyzerLog.Debugf("Enqueued for anomaly detection for UE %s", record.UeIp)
+		}
 	}
 }

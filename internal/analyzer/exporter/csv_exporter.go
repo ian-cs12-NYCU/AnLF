@@ -60,7 +60,12 @@ func NewCsvExporter(baseDir string) (*CsvExporter, error) {
 }
 
 // Export writes a UeTrafficRecord to CSV file
-func (e *CsvExporter) Export(rec *models.UeTrafficRecord) error {
+func (e *CsvExporter) Export(data interface{}) error {
+	rec, ok := data.(*models.UeTrafficRecord)
+	if !ok {
+		return fmt.Errorf("invalid data type, expected *models.UeTrafficRecord")
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

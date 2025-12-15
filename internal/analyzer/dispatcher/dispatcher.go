@@ -9,21 +9,19 @@ import (
 	"github.com/free5gc/anlf/internal/logger"
 )
 
-// ExportDispatcher routes messages to appropriate exporters based on message type
 type ExportDispatcher struct {
-	trafficExporter exporter.Exporter
-	// Future: llmExporter exporter.Exporter
-	mu sync.RWMutex
+	trafficExporter   exporter.Exporter
+	inferenceExporter exporter.Exporter
+	mu                sync.RWMutex
 }
 
-// NewExportDispatcher creates a new dispatcher with configured exporters
-func NewExportDispatcher(trafficExporter exporter.Exporter) *ExportDispatcher {
+func NewExportDispatcher(trafficExporter exporter.Exporter, inferenceExporter exporter.Exporter) *ExportDispatcher {
 	return &ExportDispatcher{
-		trafficExporter: trafficExporter,
+		trafficExporter:   trafficExporter,
+		inferenceExporter: inferenceExporter,
 	}
 }
 
-// Handle implements queue.MessageHandler interface
 func (d *ExportDispatcher) Handle(msg *queue.ExportMessage) error {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -31,16 +29,13 @@ func (d *ExportDispatcher) Handle(msg *queue.ExportMessage) error {
 	switch msg.Type {
 	case queue.MessageTypeTrafficRecord:
 		return d.handleTrafficRecord(msg)
-	case queue.MessageTypeLLMInference:
-		// Future: implement LLM inference result export
-		logger.AnalyzerLog.Warnf("LLM inference export not yet implemented")
-		return nil
+	case queue.MessageTypeInferenceResult:
+		return d.handleInferenceResult(msg)
 	default:
 		return fmt.Errorf("unknown message type: %s", msg.Type)
 	}
 }
 
-// handleTrafficRecord processes traffic record messages
 func (d *ExportDispatcher) handleTrafficRecord(msg *queue.ExportMessage) error {
 	record, ok := msg.AsTrafficRecord()
 	if !ok {
@@ -56,23 +51,53 @@ func (d *ExportDispatcher) handleTrafficRecord(msg *queue.ExportMessage) error {
 	return nil
 }
 
-// Shutdown closes all exporters
+func (d *ExportDispatcher) handleInferenceResult(msg *queue.ExportMessage) error {
+	result, ok := msg.AsInferenceResult()
+	if !ok {
+		return fmt.Errorf("failed to convert message to inference result")
+	}
+
+	if d.inferenceExporter == nil {
+		return nil
+	}
+
+	if err := d.inferenceExporter.Export(result); err != nil {
+		return fmt.Errorf("inference exporter failed: %w", err)
+	}
+
+	logger.AnalyzerLog.Debugf("Exported inference result for UE %s: %s via %s",
+		result.UeIp, result.Prediction, d.inferenceExporter.Name())
+	return nil
+}
+
 func (d *ExportDispatcher) Shutdown() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	logger.AnalyzerLog.Info("Shutting down ExportDispatcher...")
 
+	var errs []error
+
 	if err := d.trafficExporter.Shutdown(); err != nil {
 		logger.AnalyzerLog.Errorf("Traffic exporter shutdown error: %v", err)
-		return err
+		errs = append(errs, err)
+	}
+
+	if d.inferenceExporter != nil {
+		if err := d.inferenceExporter.Shutdown(); err != nil {
+			logger.AnalyzerLog.Errorf("Inference exporter shutdown error: %v", err)
+			errs = append(errs, err)
+		}
 	}
 
 	logger.AnalyzerLog.Info("ExportDispatcher shutdown complete")
+
+	if len(errs) > 0 {
+		return fmt.Errorf("shutdown errors: %v", errs)
+	}
 	return nil
 }
 
-// SetTrafficExporter updates the traffic exporter (for future hot-reload)
 func (d *ExportDispatcher) SetTrafficExporter(exp exporter.Exporter) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

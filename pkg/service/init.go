@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/free5gc/anlf/internal/analyzer"
+	"github.com/free5gc/anlf/internal/analyzer/detector"
 	"github.com/free5gc/anlf/internal/analyzer/dispatcher"
 	"github.com/free5gc/anlf/internal/analyzer/exporter"
 	"github.com/free5gc/anlf/internal/analyzer/queue"
@@ -47,6 +48,7 @@ type AnlfApp struct {
 	shutdownTimeout  time.Duration
 	ebpfComponent    *ebpf.Component
 	exportDispatcher *dispatcher.ExportDispatcher
+	anomalyDetector  *detector.AnomalyDetector
 }
 
 var _ app.App = &AnlfApp{}
@@ -282,9 +284,9 @@ func (a *AnlfApp) SetShutdownTimeout(timeout time.Duration) {
 	a.shutdownTimeout = timeout
 }
 
-// initMonitoringPipeline initializes the data pipeline (Monitor -> Analyzer -> Queue -> Dispatcher -> Exporters)
+// initMonitoringPipeline initializes the data pipeline (Monitor -> Analyzer -> Queues -> Detector/Dispatcher -> Exporters)
 func (a *AnlfApp) initMonitoringPipeline() error {
-	logger.MainLog.Info("Initializing monitoring pipeline with message queue...")
+	logger.MainLog.Info("Initializing monitoring pipeline with message queues and anomaly detection...")
 
 	// Create feature channel
 	featureChan := make(chan *models.UeTrafficRecord, 1024)
@@ -296,7 +298,7 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 		return err
 	}
 
-	// Create exporter based on recording config
+	// 1. Create traffic exporter based on recording config
 	var trafficExp exporter.Exporter
 	if a.cfg.GetRecordingStatus() {
 		outputDir := a.cfg.GetRecordingOutputDir()
@@ -305,25 +307,60 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 		if err != nil {
 			return err
 		}
-		logger.MainLog.Infof("Recording enabled to directory: %s", outputDir)
+		logger.MainLog.Infof("Traffic recording enabled to directory: %s", outputDir)
 	} else {
-		// TODO: Implement LlmExporter for inference mode
-		logger.MainLog.Warnf("Recording disabled - using stub exporter")
+		logger.MainLog.Warnf("Traffic recording disabled - using stub exporter")
 		trafficExp = exporter.NewStubExporter()
 	}
 
-	// Create ExportDispatcher
-	a.exportDispatcher = dispatcher.NewExportDispatcher(trafficExp)
+	// 2. Create inference result exporter (if anomaly detection is enabled)
+	var inferenceExp exporter.Exporter
+	if a.cfg.GetAnomalyDetectionEnabled() {
+		outputDir := a.cfg.GetRecordingOutputDir()
+		var err error
+		inferenceExp, err = exporter.NewInferenceResultExporter(outputDir)
+		if err != nil {
+			logger.MainLog.Errorf("Failed to create inference result exporter: %v", err)
+			logger.MainLog.Warn("Anomaly detection will continue but results won't be exported")
+			inferenceExp = nil
+		} else {
+			logger.MainLog.Infof("Inference result export enabled to directory: %s", outputDir)
+		}
+	}
 
-	// Create ExportQueue with dispatcher as handler
-	queueConfig := queue.DefaultConfig()
+	// 3. Create ExportDispatcher
+	a.exportDispatcher = dispatcher.NewExportDispatcher(trafficExp, inferenceExp)
+
+	// 4. Create ExportQueue with dispatcher as handler
+	queueConfig := queue.DefaultQueueConfig()
 	exportQueue := queue.NewExportQueue(queueConfig, a.exportDispatcher)
 	a.lifecycleManager.Register(exportQueue)
 
-	// Create FlowAnalyzer with queue
-	flowAnalyzer := analyzer.NewFlowAnalyzer(featureChan, exportQueue)
+	// 5. Create AnomalyDetector (if enabled)
+	anomalyDetectorCfg := detector.AnomalyDetectorConfig{
+		Enabled:      a.cfg.GetAnomalyDetectionEnabled(),
+		LLMServerURL: a.cfg.GetAnomalyDetectionServerURL(),
+		LLMTimeout:   time.Duration(a.cfg.GetAnomalyDetectionTimeout()) * time.Second,
+		QueueConfig:  queue.DefaultQueueConfig(),
+	}
+
+	var err error
+	a.anomalyDetector, err = detector.NewAnomalyDetector(anomalyDetectorCfg, exportQueue)
+	if err != nil {
+		logger.MainLog.Errorf("Failed to create AnomalyDetector: %v", err)
+		logger.MainLog.Warn("System will continue without anomaly detection")
+		// Create a disabled detector to avoid nil pointer issues
+		a.anomalyDetector, _ = detector.NewAnomalyDetector(detector.AnomalyDetectorConfig{Enabled: false}, exportQueue)
+	} else if a.anomalyDetector.IsEnabled() {
+		logger.MainLog.Infof("AnomalyDetector enabled with LLM server: %s", a.cfg.GetAnomalyDetectionServerURL())
+		a.lifecycleManager.Register(a.anomalyDetector)
+	}
+
+	// 6. Create FlowAnalyzer with queues
+	flowAnalyzer := analyzer.NewFlowAnalyzer(featureChan, exportQueue, a.anomalyDetector)
 	a.lifecycleManager.Register(flowAnalyzer)
 
+	// 7.
 	// Create TrafficMonitor
 	ebpfManager := a.ebpfComponent.GetManager()
 	pollInterval := time.Duration(a.cfg.GetMonitoringPollInterval()) * time.Second

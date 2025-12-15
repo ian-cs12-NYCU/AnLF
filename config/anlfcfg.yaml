@@ -26,6 +26,11 @@ configuration:
     enable: true
     pollInterval: 1
     ueTablePath: /home/vagrant/AnLF/anlf/config/static_ue_list_20.json
+  
+  anomalyDetection:
+    enable: false  # Set to true to enable LLM-based anomaly detection
+    serverUrl: http://127.0.0.1:5000  # LLM server endpoint
+    timeout: 5  # Request timeout in seconds
 
 logger:
   enable: true

@@ -1,7 +1,5 @@
 package exporter
 
-import "github.com/free5gc/anlf/pkg/models"
-
 // StubExporter is a no-op exporter for when recording is disabled
 type StubExporter struct{}
 
@@ -11,7 +9,7 @@ func NewStubExporter() *StubExporter {
 }
 
 // Export does nothing
-func (e *StubExporter) Export(rec *models.UeTrafficRecord) error {
+func (e *StubExporter) Export(data interface{}) error {
 	return nil
 }
 
