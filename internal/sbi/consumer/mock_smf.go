@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/free5gc/anlf/internal/logger"
@@ -61,14 +62,32 @@ func (m *MockSMF) GetUeCount() int {
 	return len(m.ueTable)
 }
 
-// GetAllUeIps returns a slice of all known UE IPs
+// GetAllUeIps returns a slice of all known UE IPs, sorted by SUPI
 func (m *MockSMF) GetAllUeIps() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	ips := make([]string, 0, len(m.ueTable))
-	for ip := range m.ueTable {
-		ips = append(ips, ip)
+	// Create slice of IP-SUPI pairs for sorting
+	type ueEntry struct {
+		ip   string
+		supi string
 	}
+
+	entries := make([]ueEntry, 0, len(m.ueTable))
+	for ip, supi := range m.ueTable {
+		entries = append(entries, ueEntry{ip: ip, supi: supi})
+	}
+
+	// Sort by SUPI
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].supi < entries[j].supi
+	})
+
+	// Extract sorted IPs
+	ips := make([]string, len(entries))
+	for i, entry := range entries {
+		ips[i] = entry.ip
+	}
+
 	return ips
 }

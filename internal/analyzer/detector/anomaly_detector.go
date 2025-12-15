@@ -74,8 +74,21 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 		return fmt.Errorf("LLM batch prediction failed: %w", err)
 	}
 
-	// Enqueue individual results to ExportQueue
-	for _, result := range batchResult.Results {
+	// Sort results by SUPI to maintain consistent order
+	sortedResults := make([]*models.InferenceResult, len(batchResult.Results))
+	copy(sortedResults, batchResult.Results)
+
+	// Simple bubble sort by SUPI
+	for i := 0; i < len(sortedResults)-1; i++ {
+		for j := i + 1; j < len(sortedResults); j++ {
+			if sortedResults[i].Supi > sortedResults[j].Supi {
+				sortedResults[i], sortedResults[j] = sortedResults[j], sortedResults[i]
+			}
+		}
+	}
+
+	// Enqueue sorted results to ExportQueue
+	for _, result := range sortedResults {
 		msg := queue.NewInferenceResultMessage(result)
 		if err := d.exportQueue.EnqueueExport(msg); err != nil {
 			logger.AnalyzerLog.Errorf("[AnomalyDetector] Failed to enqueue inference result for %s: %v", result.UeIp, err)
@@ -85,7 +98,7 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 		}
 	}
 
-	logger.AnalyzerLog.Infof("[AnomalyDetector] Batch processing complete: %d UEs analyzed", len(batchResult.Results))
+	logger.AnalyzerLog.Infof("[AnomalyDetector] Batch processing complete: %d UEs analyzed (sorted by SUPI)", len(sortedResults))
 	return nil
 }
 

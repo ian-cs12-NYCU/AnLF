@@ -99,7 +99,7 @@ func (m *TrafficMonitor) pollAndSend() {
 		return
 	}
 
-	// Get all known UEs from SMF
+	// Get all known UEs from SMF (already sorted by SUPI)
 	allUeIps := m.smfClient.GetAllUeIps()
 
 	if len(allUeIps) == 0 {
@@ -107,7 +107,7 @@ func (m *TrafficMonitor) pollAndSend() {
 		return
 	}
 
-	logger.MonitorLog.Infof("Processing %d known UEs (eBPF metrics for %d UEs)", len(allUeIps), len(metrics))
+	logger.MonitorLog.Infof("Processing %d known UEs (eBPF metrics for %d UEs), sorted by SUPI", len(allUeIps), len(metrics))
 
 	// Collect all UE records in a batch
 	records := make([]*models.UeTrafficRecord, 0, len(allUeIps))
