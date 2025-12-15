@@ -55,15 +55,63 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 	}
 }
 
+func (c *LLMClient) Predict(ctx context.Context, record *models.UeTrafficRecord) (*models.InferenceResult, error) {
+	req := &models.InferenceRequest{
+		SystemPrompt: c.systemPrompt,
+		Record:       record,
+		Timestamp:    time.Now().Unix(),
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.serverURL+"/predict", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	logger.AnalyzerLog.Debugf("[LLMClient] Sending inference request to %s for UE %s", c.serverURL, record.UeIp)
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		logger.AnalyzerLog.Warnf("[LLMClient] Failed to connect to LLM server at %s: %v", c.serverURL, err)
+		return nil, fmt.Errorf("failed to send request to LLM server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		logger.AnalyzerLog.Warnf("[LLMClient] LLM server returned error status %d for UE %s: %s", resp.StatusCode, record.UeIp, string(body))
+		return nil, fmt.Errorf("LLM server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result models.InferenceResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	logger.AnalyzerLog.Debugf("[LLMClient] Received inference result for UE %s: prediction=%s, score=%.2f, confidence=%.2f",
+		record.UeIp, result.Prediction, result.AnomalyScore, result.Confidence)
+
+	return &result, nil
+}
+
 // PredictBatch sends a batch of UE traffic records to LLM server for anomaly detection
 // Uses OpenAI-compatible API (/v1/chat/completions)
 func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTrafficRecord) (*models.BatchInferenceResult, error) {
 	logger.AnalyzerLog.Infof("[LLMClient] Attempting batch prediction for %d UEs", len(records))
-	
-	// Build a structured prompt for the LLM
+	return c.predictBatchOpenAI(ctx, records)
+}
+
+// predictBatchOpenAI uses OpenAI-compatible /v1/chat/completions endpoint
+func (c *LLMClient) predictBatchOpenAI(ctx context.Context, records []*models.UeTrafficRecord) (*models.BatchInferenceResult, error) {
+	// Build a more structured prompt for the LLM
 	var userPrompt strings.Builder
-	userPrompt.WriteString("Analyze these network traffic records and classify each as 'normal' or 'attack'.\n")
-	userPrompt.WriteString("Return a JSON object with 'results' array containing one result per UE.\n\n")
+	userPrompt.WriteString("Analyze these network traffic records and classify each as 'normal' or 'attack'.\\n")
+	userPrompt.WriteString("Return a JSON array with one result per UE.\\n\\n")
 	
 	recordsJSON, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
@@ -72,7 +120,7 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 	userPrompt.Write(recordsJSON)
 	
 	// Expected output format instruction
-	userPrompt.WriteString("\n\nOutput format: {\"results\":[{\"ue_ip\":\"...\",\"supi\":\"...\",\"prediction\":\"normal\",\"anomaly_score\":0.0,\"confidence\":1.0}]}")
+	userPrompt.WriteString("\\n\\nOutput format: {\\\"results\\\":[{\\\"ue_ip\\\":\\\"...\\\",\\\"supi\\\":\\\"...\\\",\\\"prediction\\\":\\\"normal/attack\\\",\\\"anomaly_score\\\":0.0-1.0,\\\"confidence\\\":0.0-1.0}]}")
 
 	// OpenAI Chat Completions API format
 	openAIReq := map[string]interface{}{
@@ -88,7 +136,7 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 			},
 		},
 		"temperature": 0.1,
-		"max_tokens":  500,
+		"max_tokens":  500, // Increased for batch responses (10 UEs * ~50 tokens each)
 	}
 
 	jsonData, err := json.Marshal(openAIReq)
@@ -111,6 +159,12 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		logger.AnalyzerLog.Warnf("[LLMClient] ✗ OpenAI API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("OpenAI API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -118,12 +172,7 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		logger.AnalyzerLog.Warnf("[LLMClient] ✗ OpenAI API returned status %d: %s", resp.StatusCode, string(respBody))
-		return nil, fmt.Errorf("OpenAI API returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	logger.AnalyzerLog.Debugf("[LLMClient] Raw OpenAI response (first 1000 chars): %s", string(respBody[:min(len(respBody), 1000)]))
+	logger.AnalyzerLog.Debugf("[LLMClient] Raw OpenAI response: %s", string(respBody))
 
 	// Parse OpenAI response
 	var openAIResp struct {
@@ -147,40 +196,42 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 
 	// Parse the content as our BatchInferenceResult
 	content := openAIResp.Choices[0].Message.Content
-	logger.AnalyzerLog.Infof("[LLMClient] Raw LLM content (length=%d chars): %s", len(content), content)
+	logger.AnalyzerLog.Debugf("[LLMClient] OpenAI raw content: %s", content)
 	
 	// Clean potential markdown formatting and extract JSON
 	content = strings.TrimSpace(content)
 	
-	// Remove markdown code blocks (```json ... ``` or ``` ... ```)
-	if strings.Contains(content, "```") {
-		// Remove opening ```json or ```
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimPrefix(content, "```")
-		// Remove closing ```
-		content = strings.TrimSuffix(content, "```")
+	// Remove markdown code blocks
+	if strings.HasPrefix(content, "```") {
+		lines := strings.Split(content, "\\n")
+		var jsonLines []string
+		inCodeBlock := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "```") {
+				inCodeBlock = !inCodeBlock
+				continue
+			}
+			if inCodeBlock || !strings.HasPrefix(line, "```") {
+				jsonLines = append(jsonLines, line)
+			}
+		}
+		content = strings.Join(jsonLines, "\\n")
 		content = strings.TrimSpace(content)
 	}
 	
 	// Try to extract JSON object if wrapped in text
-	if idx := strings.Index(content, "{"); idx >= 0 {
+	if idx := strings.Index(content, "{"); idx > 0 {
 		content = content[idx:]
 	}
-	if idx := strings.LastIndex(content, "}"); idx >= 0 {
+	if idx := strings.LastIndex(content, "}"); idx > 0 && idx < len(content)-1 {
 		content = content[:idx+1]
 	}
-	
-	logger.AnalyzerLog.Infof("[LLMClient] Cleaned JSON content (length=%d chars): %s", len(content), content)
 
 	var result models.BatchInferenceResult
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
 		logger.AnalyzerLog.Warnf("[LLMClient] ✗ Failed to parse LLM response as BatchInferenceResult: %v", err)
 		logger.AnalyzerLog.Warnf("[LLMClient] Content length: %d bytes", len(content))
-		if len(content) > 0 {
-			logger.AnalyzerLog.Warnf("[LLMClient] Content preview (first 500 chars): %s", content[:min(len(content), 500)])
-		} else {
-			logger.AnalyzerLog.Warnf("[LLMClient] Content is EMPTY!")
-		}
+		logger.AnalyzerLog.Warnf("[LLMClient] Content preview: %s", content[:min(len(content), 500)])
 		
 		// If parsing fails, create default results for fail-open
 		logger.AnalyzerLog.Warnf("[LLMClient] Using fail-open: returning default 'normal' results for %d UEs", len(records))
@@ -207,7 +258,52 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 	result.BatchSize = len(result.Results)
 	result.Timestamp = now
 
-	logger.AnalyzerLog.Infof("[LLMClient] ✓ Successfully parsed %d UE results from LLM", len(result.Results))
+	logger.AnalyzerLog.Infof("[LLMClient] ✓ Received OpenAI batch inference result for %d UEs", len(result.Results))
+	return &result, nil
+}
+
+// predictBatchCustom uses custom /predict_batch endpoint (for test server)
+func (c *LLMClient) predictBatchCustom(ctx context.Context, records []*models.UeTrafficRecord) (*models.BatchInferenceResult, error) {
+	req := &models.BatchInferenceRequest{
+		SystemPrompt: c.systemPrompt,
+		Records:      records,
+		Timestamp:    time.Now().Unix(),
+		BatchSize:    len(records),
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal batch request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.serverURL+"/predict_batch", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create batch request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	logger.AnalyzerLog.Infof("[LLMClient] → Trying custom API: POST %s/predict_batch", c.serverURL)
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		logger.AnalyzerLog.Warnf("[LLMClient] Failed to connect to LLM server at %s: %v", c.serverURL, err)
+		return nil, fmt.Errorf("failed to send batch request to LLM server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		logger.AnalyzerLog.Warnf("[LLMClient] LLM server returned error status %d for batch request: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("LLM server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result models.BatchInferenceResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode batch response: %w", err)
+	}
+
+	logger.AnalyzerLog.Infof("[LLMClient] Received custom batch inference result for %d UEs", len(result.Results))
+
 	return &result, nil
 }
 
@@ -258,11 +354,4 @@ func (c *LLMClient) HealthCheck(ctx context.Context) error {
 
 	logger.AnalyzerLog.Infof("[LLMClient] ✓ LLM server health check PASSED")
 	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

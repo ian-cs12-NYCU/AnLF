@@ -66,6 +66,7 @@ type AnomalyDetection struct {
 	ServerURL        string `yaml:"serverUrl" valid:"url,optional"`
 	Timeout          int    `yaml:"timeout" valid:"type(int),optional"`             // in seconds
 	SystemPromptPath string `yaml:"systemPromptPath" valid:"type(string),optional"` // path to system prompt file
+	BatchSize        int    `yaml:"batchSize" valid:"type(int),optional"`           // optimal batch size for LLM (5-10 UEs recommended)
 }
 
 type Logger struct {
@@ -362,4 +363,13 @@ func (c *Config) GetAnomalyDetectionSystemPromptPath() string {
 		return c.Configuration.AnomalyDetection.SystemPromptPath
 	}
 	return "./prompts/anomaly_detection_basic.txt" // default system prompt path
+}
+
+func (c *Config) GetAnomalyDetectionBatchSize() int {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.BatchSize > 0 {
+		return c.Configuration.AnomalyDetection.BatchSize
+	}
+	return 5 // default batch size (optimal for Qwen 2.5 1.5B)
 }

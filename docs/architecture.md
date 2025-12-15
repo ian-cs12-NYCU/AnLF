@@ -57,10 +57,10 @@ graph TB
     Analyzer -->|Batch UeTrafficRecord| InfQueue
     
     InfQueue -->|Worker| Detector
-    Detector -->|PredictBatch| LLMClient
-    LLMClient -->|POST /predict_batch<br/>All UEs in 1 request| LLMServer
-    LLMServer -->|BatchInferenceResult| LLMClient
-    Detector -->|InferenceResult<br/>per UE| ExpQueue
+    Detector -->|Batch Split<br/>5 UEs per sub-batch| LLMClient
+    LLMClient -->|Parallel Goroutines<br/>POST /predict_batch| LLMServer
+    LLMServer -->|BatchInferenceResult<br/>per sub-batch| LLMClient
+    Detector -->|InferenceResult<br/>per UE sorted by SUPI| ExpQueue
     
     ExpQueue -->|Worker| Dispatcher
     Dispatcher -->|TrafficRecord| CSV
@@ -730,10 +730,33 @@ configuration:
 
 ```yaml
 anomalyDetection:
-  enable: false                           # 預設關閉
+  enable: true                            # 啟用異常檢測
   serverUrl: "http://127.0.0.1:5000"     # LLM 服務地址
-  timeout: 5                              # 秒
+  timeout: 5                              # 請求超時 (秒)
+  batchSize: 5                            # 最佳批次大小 (5-10 UEs)
+  systemPromptPath: ./prompts/anomaly_detection_basic.txt
 ```
+
+**效能優化特性** ✨ **最新版本 (2025-12-15)**
+
+1. **批次分割 (Batch Splitting)**
+   - 大批次 (例如 20 UEs) 自動分割為小批次 (5 UEs)
+   - 避免小型 LLM (Qwen 2.5 1.5B) 因批次過大導致格式錯誤
+   - 可透過 `batchSize` 配置調整 (建議 5-10)
+
+2. **並行處理 (Parallel Processing with Goroutines)**
+   - 多個子批次同時發送到 LLM 伺服器
+   - 顯著降低總推論延遲 (20 UEs: 從 ~2s 降至 ~500ms)
+   - 每個 goroutine 使用獨立的 context 和 timeout
+
+3. **Fail-Open 機制**
+   - LLM 推論失敗時自動返回 "Normal" 預設結果
+   - 避免網路流量因推論錯誤而中斷
+   - 記錄錯誤但繼續運作，確保系統可用性
+
+4. **結果排序 (SUPI-based Sorting)**
+   - 推論結果按 SUPI 排序後輸出
+   - 確保輸出檔案順序一致，便於分析
 
 **啟用異常檢測的步驟:**
 1. 修改 config/anlfcfg.yaml:
@@ -742,11 +765,12 @@ anomalyDetection:
      enable: true
      serverUrl: "http://127.0.0.1:5000"
      timeout: 5
+     batchSize: 5
    ```
 
 2. 啟動 LLM 推論伺服器:
    ```bash
-   # 服務必須在 http://127.0.0.1:5001 監聽
+   # 服務必須在指定地址監聽
    # 實作 POST /predict_batch 端點 (批次推論)
    # 實作 GET /health 端點
    

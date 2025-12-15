@@ -342,6 +342,7 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 		LLMServerURL:     a.cfg.GetAnomalyDetectionServerURL(),
 		LLMTimeout:       time.Duration(a.cfg.GetAnomalyDetectionTimeout()) * time.Second,
 		SystemPromptPath: a.cfg.GetAnomalyDetectionSystemPromptPath(),
+		BatchSize:        a.cfg.GetAnomalyDetectionBatchSize(), // Optimal batch size for LLM (5-10 UEs)
 		QueueConfig:      queue.DefaultQueueConfig(),
 	}
 
