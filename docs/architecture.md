@@ -18,13 +18,20 @@ graph TB
         Monitor[TrafficMonitor<br/>週期性輪詢]
         Analyzer[FlowAnalyzer<br/>流量分析器]
         
+        subgraph "Inference Pipeline"
+            InfQueue[InferenceQueue<br/>推論佇列<br/>LLM 推論請求]
+            Detector[AnomalyDetector<br/>異常偵測器]
+            LLMClient[LLM Client<br/>HTTP 客戶端]
+            LLMServer["LLM Server<br/>外部推論服務<br/>:5000"]
+        end
+        
         subgraph "Export Pipeline"
-            Queue[ExportQueue<br/>Message Queue<br/>Multi-Worker]
+            ExpQueue[ExportQueue<br/>匯出佇列<br/>Multi-Worker]
             Dispatcher[ExportDispatcher<br/>訊息分發器]
             
             subgraph "Exporters"
                 CSV[CsvExporter<br/>流量記錄]
-                LLM[LLM Exporter<br/>推論結果<br/>未來擴展]
+                InfExp[InferenceResultExporter<br/>推論結果]
             end
         end
         
@@ -46,10 +53,18 @@ graph TB
     SMF -.->|UE Info<br/>IP-SUPI Mapping| Monitor
     
     Monitor -->|Feature Vectors<br/>via Channel| Analyzer
-    Analyzer -->|Enqueue Message| Queue
-    Queue -->|Dispatch by Type| Dispatcher
-    Dispatcher -->|Traffic Record| CSV
-    Dispatcher -.->|Future: LLM Result| LLM
+    Analyzer -->|Traffic Record| ExpQueue
+    Analyzer -->|UeTrafficRecord| InfQueue
+    
+    InfQueue -->|Worker| Detector
+    Detector -->|Predict| LLMClient
+    LLMClient -->|POST /predict| LLMServer
+    LLMServer -->|InferenceResult| LLMClient
+    Detector -->|InferenceResult| ExpQueue
+    
+    ExpQueue -->|Worker| Dispatcher
+    Dispatcher -->|TrafficRecord| CSV
+    Dispatcher -->|InferenceResult| InfExp
     
     AnLF -->|NF Registration| NRF
     
@@ -61,12 +76,15 @@ graph TB
     
     style eBPF fill:#ff9999
     style Monitor fill:#99ccff
-    style Queue fill:#ffdd99
+    style InfQueue fill:#ffdd99
+    style Detector fill:#ccffcc
+    style LLMClient fill:#99ff99
+    style ExpQueue fill:#ffdd99
     style Dispatcher fill:#ddff99
     style CSV fill:#ffcc99
-    style LLM fill:#ccccff,stroke-dasharray: 5 5
-    style Stub fill:#dddddd
+    style InfExp fill:#99ff99
     style MTLF fill:#cc99ff
+    style LLMServer fill:#ffaaaa
 ```
 
 ## 2. AnLF 內部資料流管道 (Internal Data Pipeline)
@@ -78,11 +96,15 @@ sequenceDiagram
     participant M as TrafficMonitor
     participant C as Go Channel<br/>(Feature)
     participant A as FlowAnalyzer
-    participant Q as ExportQueue<br/>(Message Queue)
-    participant W as Queue Workers<br/>(4 goroutines)
-    participant D as ExportDispatcher
-    participant E as Exporter<br/>(CSV/LLM)
-    participant F as Output File
+    participant EQ as ExportQueue
+    participant IQ as InferenceQueue
+    participant D as Detector
+    participant LC as LLMClient
+    participant LS as LLM Server
+    participant EW as Export Workers
+    participant ED as ExportDispatcher
+    participant E as Exporters
+    participant F as Output Files
     
     Note over K: 封包到達時<br/>累計統計數據
     
@@ -105,33 +127,39 @@ sequenceDiagram
     
     loop Analyzer Processing Loop
         C->>A: Receive Feature Vector
-        A->>A: Create ExportMessage<br/>(Type + Data)
-        A->>Q: Enqueue(msg)
         
-        alt Queue Full
-            Q-->>A: Drop & Log warning
+        par Export Pipeline
+            A->>EQ: Enqueue TrafficRecord
+        and Inference Pipeline
+            A->>IQ: Enqueue Record
         end
     end
     
-    par Worker Processing (Parallel)
-        loop Worker-1
-            Q->>W: Dequeue message
-            W->>D: Handle(msg)
-            D->>D: Route by msg.Type
+    par Inference Processing
+        loop Inference Worker
+            IQ->>D: Dequeue Record
+            D->>LC: Predict(ctx, record)
+            LC->>LS: POST /predict (JSON)
+            LS-->>LC: InferenceResult
+            D->>EQ: Enqueue InferenceResult
+        end
+    and Export Processing
+        loop Export Workers (4 parallel)
+            EQ->>EW: Dequeue Message
+            EW->>ED: Handle(msg)
+            ED->>ED: Route by msg.Type
             
             alt TrafficRecord
-                D->>E: CsvExporter.Export()
+                ED->>E: CsvExporter.Export()
                 E->>F: Write CSV row
-            else LLMInference (Future)
-                D->>E: LlmExporter.Export()
-                E->>F: Write JSON/JSONL
+            else InferenceResult
+                ED->>E: InferenceResultExporter.Export()
+                E->>F: Write JSON/JSONL row
             end
         end
-    and Worker-2..4
-        Note over W: 其他 3 個 workers<br/>同時並行處理
     end
     
-    Note over A,F: Graceful Shutdown:<br/>Stop → Drain Queue → Flush Files
+    Note over A,F: Graceful Shutdown:<br/>Stop → Drain Queues → Flush Files
 ```
 
 ## 3. eBPF 資料收集層 (eBPF Data Collection Layer)
@@ -215,7 +243,9 @@ graph TB
     style Calc7 fill:#ffffcc,stroke:#cccc00
 ```
 
-## 5. Message Queue 架構 (Export Message Queue Architecture)
+## 5. Message Queue 架構 (Message Queue Architecture - Dual Pipeline)
+
+### 5.1 Export Queue 與 Inference Queue 雙管道
 
 ```mermaid
 %%{init: {'theme':'neutral'}}%%
@@ -224,78 +254,126 @@ graph TB
         FA[FlowAnalyzer<br/>生產者]
     end
     
-    subgraph "Message Queue System"
+    subgraph "Dual Pipeline System"
         direction TB
-        Queue[ExportQueue<br/>Buffered Channel<br/>容量: 10000]
+        FA --> ExpQueue["ExportQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
+        FA --> InfQueue["InferenceQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
         
-        subgraph "Workers"
-            W1[Worker 1]
-            W2[Worker 2]
-            W3[Worker 3]
-            W4[Worker 4]
+        subgraph "Export Workers"
+            EW1[Worker 1]
+            EW2[Worker 2]
+            EW3[Worker 3]
+            EW4[Worker 4]
         end
         
-        Monitor[Queue Monitor<br/>監控利用率]
+        subgraph "Inference Workers"
+            IW1[Worker 1]
+            IW2[Worker 2]
+        end
+        
+        InfQueue -->|Distribute| IW1
+        InfQueue -->|Distribute| IW2
+        
+        ExpQueue -->|Distribute| EW1
+        ExpQueue -->|Distribute| EW2
+        ExpQueue -->|Distribute| EW3
+        ExpQueue -->|Distribute| EW4
     end
     
-    subgraph "Consumer (Dispatcher)"
-        Disp[ExportDispatcher<br/>訊息分發器]
+    subgraph "Inference Processing"
+        IW1 -->|detector.Handle| Detector["AnomalyDetector<br/>---<br/>LLM 推論"]
+        IW2 -->|detector.Handle| Detector
+        
+        Detector -->|LLMClient.Predict| LLMServer["LLM Server<br/>:5000<br/>POST /predict"]
+        
+        Detector -->|InferenceResult| ExpQueue
+    end
+    
+    subgraph "Export Processing"
+        EW1 --> Disp["ExportDispatcher<br/>訊息分發器"]
+        EW2 --> Disp
+        EW3 --> Disp
+        EW4 --> Disp
         
         subgraph "Export Types"
-            TR[MessageType:<br/>TrafficRecord]
-            LLM[MessageType:<br/>LLMInference<br/>未來]
+            TR["MessageType:<br/>TrafficRecord"]
+            IR["MessageType:<br/>InferenceResult"]
         end
+        
+        Disp -->|Route| TR
+        Disp -->|Route| IR
     end
     
     subgraph "Exporters (Output)"
-        CSV[CsvExporter<br/>CSV 檔案]
-        JSON[LLM Exporter<br/>JSON/JSONL<br/>未來]
+        CSV[CsvExporter<br/>traffic_*.csv]
+        InfExp[InferenceResultExporter<br/>inference_*.jsonl]
     end
     
-    FA -->|Enqueue| Queue
-    Queue -->|Distribute| W1
-    Queue -->|Distribute| W2
-    Queue -->|Distribute| W3
-    Queue -->|Distribute| W4
-    
-    W1 --> Disp
-    W2 --> Disp
-    W3 --> Disp
-    W4 --> Disp
-    
-    Monitor -.->|30s Report| Queue
-    
-    Disp -->|Route| TR
-    Disp -.->|Future| LLM
-    
     TR --> CSV
-    LLM -.-> JSON
+    IR --> InfExp
     
-    style Queue fill:#ffdd99
-    style W1 fill:#ddffdd
-    style W2 fill:#ddffdd
-    style W3 fill:#ddffdd
-    style W4 fill:#ddffdd
+    style ExpQueue fill:#ffdd99
+    style InfQueue fill:#ccffcc
+    style EW1 fill:#ddffdd
+    style EW2 fill:#ddffdd
+    style EW3 fill:#ddffdd
+    style EW4 fill:#ddffdd
+    style IW1 fill:#ddffdd
+    style IW2 fill:#ddffdd
+    style Detector fill:#99ff99
+    style LLMServer fill:#ffaaaa
     style Disp fill:#ddff99
     style TR fill:#99ccff
-    style LLM fill:#ccccff,stroke-dasharray: 5 5
+    style IR fill:#99ccff
     style CSV fill:#ffcc99
-    style JSON fill:#ccccff,stroke-dasharray: 5 5
+    style InfExp fill:#99ff99
 ```
 
-### Message Queue 特性
-- **高效能**: 使用 Go buffered channel，支援 10000 訊息緩衝
-- **並行處理**: 4 個 worker goroutines 並行處理訊息
-- **易擴展**: 透過 MessageType 輕鬆添加新的 export 類型
-- **好管理**: 內建監控，每 30 秒報告 queue 利用率
+### 5.2 Message Types
 
-### 訊息類型擴展範例
 ```go
-// 現在：流量記錄
-MessageTypeTrafficRecord -> CsvExporter -> traffic_*.csv
+// ExportMessage - 匯出管道訊息
+type ExportMessage struct {
+    Type MessageType  // "traffic_record" 或 "inference_result"
+    Data interface{}  // 實際資料
+}
 
-// 未來：LLM 推論結果
-MessageTypeLLMInference -> LlmExporter -> inference_*.jsonl
+// MessageType - 訊息類型
+const (
+    MessageTypeTrafficRecord    = "traffic_record"      // 流量記錄
+    MessageTypeInferenceResult  = "inference_result"    // 推論結果
+)
+```
+
+### 5.3 特性
+
+#### Export Queue
+- **用途**: 匯出流量記錄和推論結果
+- **容量**: 10000 訊息
+- **Workers**: 4 個並行 worker
+- **Handler**: ExportDispatcher
+- **消費者**: CsvExporter, InferenceResultExporter
+
+#### Inference Queue
+- **用途**: 推論佇列
+- **容量**: 10000 訊息
+- **Workers**: 2 個並行 worker (可調整)
+- **Handler**: AnomalyDetector
+- **處理**: HTTP POST 到 LLM Server
+
+#### 消息路由
+
+```
+FlowAnalyzer
+    ├── → ExportQueue
+    │       └── ExportDispatcher.Handle()
+    │           ├── TrafficRecord → CsvExporter → traffic_*.csv
+    │           └── InferenceResult → InferenceResultExporter → inference_*.jsonl
+    │
+    └── → InferenceQueue (if enabled)
+            └── AnomalyDetector.Handle()
+                ├── LLMClient.Predict() → LLM Server :5000
+                └── InferenceResult → ExportQueue
 ```
 
 ## 6. 雙模式運作流程 (Dual-Mode Operation)
@@ -305,26 +383,37 @@ MessageTypeLLMInference -> LlmExporter -> inference_*.jsonl
 graph TB
     Start[AnLF Startup]
     
-    Start --> Config{Read Config:<br/>EnableRecording?}
+    Start --> Config{Read Config}
     
-    Config -->|true| RecordMode[Recording Mode<br/>資料記錄]
-    Config -->|false| DisableMode[Disabled Mode<br/>不記錄資料]
+    Config -->|Recording:<br/>Enable| RecordMode["Recording Mode<br/>記錄流量"]
+    Config -->|Recording:<br/>Disable| NoRecord["No Recording<br/>不記錄流量"]
     
-    subgraph "Recording Mode"
+    Config -->|AnomalyDetection:<br/>Enable| InfMode["Inference Mode<br/>LLM 推論"]
+    Config -->|AnomalyDetection:<br/>Disable| NoInf["No Inference<br/>無推論"]
+    
+    subgraph "Export Mode"
         RecordMode --> CSV[CsvExporter]
-        CSV --> File[output/YYYYMMDD_HHMMSS/<br/>traffic_YYYYMMDD_HHMMSS.csv]
-        File --> Training[離線分析與<br/>ML 模型訓練]
+        NoRecord --> Stub1[StubExporter]
+        CSV --> File1[output/YYYYMMDD_HHMMSS/<br/>traffic_*.csv]
+        Stub1 --> NoOp1[No-op]
     end
     
-    subgraph "Disabled Mode"
-        DisableMode --> Stub[StubExporter]
-        Stub --> NoOp[No-op<br/>資料不輸出]
+    subgraph "Inference Mode"
+        InfMode --> LLC[LLMClient]
+        NoInf --> NoOp2[No Inference]
+        LLC --> LLM["LLM Server<br/>:5000"]
+        LLM --> InfResult[InferenceResult]
+        InfResult --> InfExp[InferenceResultExporter]
+        InfExp --> File2[output/YYYYMMDD_HHMMSS/<br/>inference_*.jsonl]
     end
     
     style RecordMode fill:#99ccff
-    style DisableMode fill:#dddddd
-    style File fill:#ffffcc
-    style NoOp fill:#eeeeee
+    style NoRecord fill:#dddddd
+    style InfMode fill:#99ff99
+    style NoInf fill:#dddddd
+    style File1 fill:#ffffcc
+    style File2 fill:#ffffcc
+    style LLM fill:#ffaaaa
 ```
 
 ## 7. NWDAF 資料流 (NWDAF Data Flow)
@@ -428,24 +517,72 @@ type UeTrafficRecord struct {
 }
 ```
 
+### Inference Request & Result
+```go
+// LLM 推論請求
+type InferenceRequest struct {
+    Record    *UeTrafficRecord `json:"record"`      // 流量記錄
+    Timestamp int64            `json:"timestamp"`   // 時戳
+}
+
+// LLM 推論結果
+type InferenceResult struct {
+    UeIp         string  `json:"ue_ip"`          // UE IP
+    Supi         string  `json:"supi"`           // UE identifier
+    Timestamp    int64   `json:"timestamp"`      // 時戳
+    IsAnomaly    bool    `json:"is_anomaly"`     // 是否異常
+    AnomalyScore float64 `json:"anomaly_score"` // 0.0-1.0
+    Prediction   string  `json:"prediction"`     // "normal" 或 "attack"
+    Confidence   float64 `json:"confidence"`     // 0.0-1.0
+    ModelVersion string  `json:"model_version"`  // 模型版本
+}
+```
+
 ### Export Message Structure
 ```go
 type ExportMessage struct {
-    Type MessageType  // "traffic_record", "llm_inference", etc.
+    Type MessageType  // "traffic_record" 或 "inference_result"
     Data interface{}  // 實際資料內容
 }
 
 // 範例：流量記錄訊息
 {
     Type: "traffic_record",
-    Data: &UeTrafficRecord{...}
+    Data: &UeTrafficRecord{
+        Timestamp: 1702649400,
+        Supi:      "imsi-001010000000001",
+        UeIp:      "60.60.0.1",
+        LogPPS:    4.5,
+        ...
+    }
 }
 
-// 未來：LLM 推論結果訊息
+// 範例：推論結果訊息
 {
-    Type: "llm_inference",
-    Data: &LLMInferenceResult{...}
+    Type: "inference_result",
+    Data: &InferenceResult{
+        UeIp:         "60.60.0.1",
+        Supi:         "imsi-001010000000001",
+        Timestamp:    1702649400,
+        IsAnomaly:    true,
+        AnomalyScore: 0.85,
+        Prediction:   "attack",
+        Confidence:   0.92,
+        ModelVersion: "v1.0",
+    }
 }
+```
+
+### Configuration (YAML)
+```yaml
+configuration:
+  # ... 其他配置 ...
+  
+  # 異常檢測配置
+  anomalyDetection:
+    enable: true                          # 啟用異常檢測
+    serverUrl: "http://127.0.0.1:5000"   # LLM 推論伺服器
+    timeout: 5                            # 超時時間 (秒)
 ```
 
 ## 10. 效能考量與設計決策
@@ -474,13 +611,141 @@ type ExportMessage struct {
 
 ---
 
+---
+
 ## 補充說明
 
-### AnLF 目前實作狀態
-- **已實作**: CsvExporter（記錄模式）、StubExporter（停用記錄）
-- **未實作**: LlmExporter（即時推論模式）尚在規劃中
-- **資料收集**: 專注於 eBPF 層的封包統計與特徵提取
-- **輸出格式**: CSV 格式用於離線分析與 ML 模型訓練
+### AnLF 當前實作狀態
+
+#### ✅ 已完全實作
+
+1. **eBPF 層**
+   - XDP Hook 在 UPF GTP-U 流量上
+   - Per-UE 流量統計與特徵萃取
+   - 原子操作確保資料一致性
+
+2. **TrafficMonitor**
+   - 定期輪詢 eBPF Map (預設 1-5 秒)
+   - 特徵向量計算與正規化
+   - Go Channel 生產者
+
+3. **FlowAnalyzer**
+   - 特徵向量消費者
+   - 雙管道分發:
+     - ExportQueue: 流量記錄
+     - InferenceQueue: LLM 推論請求
+
+4. **ExportQueue & ExportDispatcher**
+   - 10000 容量 buffered channel
+   - 4 個並行 worker
+   - 訊息類型路由
+   - CsvExporter (流量記錄)
+   - InferenceResultExporter (推論結果)
+
+5. **InferenceQueue & AnomalyDetector** ✨ **新**
+   - 10000 容量 buffered channel
+   - 2 個並行 worker (可配置)
+   - LLMClient HTTP 客戶端
+   - 向外部 LLM Server POST /predict
+   - 結果寫回 ExportQueue
+
+6. **配置系統**
+   - YAML 配置文件
+   - anomalyDetection 段落:
+     - enable: 啟用/停用
+     - serverUrl: LLM 伺服器地址
+     - timeout: 推論超時
+
+7. **生命週期管理**
+   - Graceful shutdown
+   - 隊列完整排空
+   - 檔案完整 flush
+
+8. **完整測試** ✨ **新**
+   - BaseQueue 測試 (4 tests)
+   - ExportQueue 測試 (4 tests)
+   - InferenceQueue 測試 (2 tests)
+   - LLMClient 測試 (5 tests)
+   - AnomalyDetector 測試 (3 tests)
+   - **總計 18 個測試全通過**
+
+#### 📋 組件清單
+
+| 組件 | 狀態 | 說明 |
+|------|------|------|
+| eBPF XDP | ✅ | 核心封包擷取層 |
+| TrafficMonitor | ✅ | 特徵監控與計算 |
+| FlowAnalyzer | ✅ | 雙管道分發 |
+| ExportQueue | ✅ | 匯出佇列 |
+| ExportDispatcher | ✅ | 訊息路由 |
+| CsvExporter | ✅ | CSV 匯出 |
+| InferenceQueue | ✅ | 推論佇列 |
+| AnomalyDetector | ✅ | LLM 推論 |
+| LLMClient | ✅ | HTTP 客戶端 |
+| InferenceResultExporter | ✅ | 推論結果匯出 |
+| LifecycleManager | ✅ | 優雅關閉 |
+
+#### 🔧 配置要點
+
+```yaml
+anomalyDetection:
+  enable: false                           # 預設關閉
+  serverUrl: "http://127.0.0.1:5000"     # LLM 服務地址
+  timeout: 5                              # 秒
+```
+
+**啟用異常檢測的步驟:**
+1. 修改 config/anlfcfg.yaml:
+   ```yaml
+   anomalyDetection:
+     enable: true
+     serverUrl: "http://127.0.0.1:5000"
+     timeout: 5
+   ```
+
+2. 啟動 LLM 推論伺服器:
+   ```bash
+   # 服務必須在 http://127.0.0.1:5000 監聽
+   # 實作 POST /predict 端點
+   # 實作 GET /health 端點
+   ```
+
+3. 啟動 AnLF:
+   ```bash
+   ./bin/anlf -cfg config/anlfcfg.yaml
+   ```
+
+### 資料流完整版本
+
+```
+[GTP-U Packets from UPF]
+        ↓
+    [eBPF XDP]
+        ↓
+    [eBPF Map: UE → Metrics]
+        ↓
+[TrafficMonitor - Poll Every 1-5s]
+        ↓
+    [Feature Channel] (capacity: 1024)
+        ↓
+[FlowAnalyzer - Process Features]
+    ├─→ [ExportQueue] 
+    │       ├─ 4 Workers → [ExportDispatcher] 
+    │       │   ├─→ TrafficRecord → [CsvExporter] → traffic_*.csv
+    │       │   └─→ InferenceResult → [InferenceResultExporter] → inference_*.jsonl
+    │       └─ Buffered Channel (capacity: 10000)
+    │
+    └─→ [InferenceQueue] (if enabled)
+            ├─ 2 Workers → [AnomalyDetector]
+            │   ├─→ [LLMClient]
+            │   │       └─→ POST http://127.0.0.1:5000/predict
+            │   │           ↓
+            │   │       [LLM Server]
+            │   │           ↓
+            │   │       InferenceResult
+            │   └─→ [ExportQueue] (feedback loop)
+            └─ Buffered Channel (capacity: 10000)
+```
 
 ### NWDAF & MTLF
 - **MTLF 角色**: 提供經過 LoRA 微調的 NF 負載預測模型
@@ -488,19 +753,4 @@ type ExportMessage struct {
 - **預測指標**: CPU Usage, Memory Usage, Load Level Average/Peak
 - **模型架構**: Flask Server + LoRA Fine-tuned Models
 
-### 資料流總結 (更新版本)
-```
-[封包流量] → [eBPF XDP] → [TrafficMonitor] → [Feature Channel] → [FlowAnalyzer]
-                                                                        ↓
-                                                                   [ExportQueue]
-                                                                   (Message Queue)
-                                                                        ↓
-                                                      4 Workers → [ExportDispatcher]
-                                                                        ↓
-                                                              ┌─────────┴─────────┐
-                                                              ↓                   ↓
-                                                        [CsvExporter]      [LlmExporter]
-                                                              ↓                (未來)
-                                                        [CSV 檔案]
-                                                      (用於訓練/分析)
-```
+---
