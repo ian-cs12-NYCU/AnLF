@@ -47,8 +47,12 @@ static __always_inline void update_ue_metrics(
             __sync_fetch_and_add(&metrics->new_flow_count, 1);
         }
         
-        __u8 dst_last_byte = inner_dst_ip & 0xFF;
-        __u64 bit_position = 1ULL << (dst_last_byte % 64);
+        // Use hash of the full destination IP to distribute across 64 bits
+        // This provides better distribution than just using last byte modulo
+        __u32 hash = inner_dst_ip;
+        hash = hash ^ (hash >> 16);
+        hash = hash ^ (hash >> 8);
+        __u64 bit_position = 1ULL << (hash & 0x3F);
         __sync_fetch_and_or(&metrics->dst_bitmap, bit_position);
         
     } else {
@@ -73,8 +77,11 @@ static __always_inline void update_ue_metrics(
             new_metrics.new_flow_count = 1;
         }
         
-        __u8 dst_last_byte = inner_dst_ip & 0xFF;
-        __u64 bit_position = 1ULL << (dst_last_byte % 64);
+        // Use hash of the full destination IP to distribute across 64 bits
+        __u32 hash = inner_dst_ip;
+        hash = hash ^ (hash >> 16);
+        hash = hash ^ (hash >> 8);
+        __u64 bit_position = 1ULL << (hash & 0x3F);
         new_metrics.dst_bitmap = bit_position;
         
         bpf_map_update_elem(&ue_metrics_map, &inner_src_ip, &new_metrics, BPF_ANY);
