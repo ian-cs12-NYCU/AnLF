@@ -59,22 +59,19 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 // Uses OpenAI-compatible API (/v1/chat/completions)
 func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTrafficRecord) (*models.BatchInferenceResult, error) {
 	logger.AnalyzerLog.Infof("[LLMClient] Attempting batch prediction for %d UEs", len(records))
-	
+
 	// Build a structured prompt for the LLM
 	var userPrompt strings.Builder
 	userPrompt.WriteString("Analyze these network traffic records and classify each as 'normal' or 'attack'.\n")
 	userPrompt.WriteString("Return a JSON object with 'results' array containing one result per UE.\n\n")
-	
+
 	recordsJSON, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal records: %w", err)
 	}
 	userPrompt.Write(recordsJSON)
-	
-	// Expected output format instruction
-	userPrompt.WriteString("\n\nOutput format: {\"results\":[{\"ue_ip\":\"...\",\"supi\":\"...\",\"prediction\":\"normal\",\"anomaly_score\":0.0,\"confidence\":1.0}]}")
 
-	// OpenAI Chat Completions API format
+	// OpenAI Chat Completions API format with json_schema
 	openAIReq := map[string]interface{}{
 		"model": "default",
 		"messages": []map[string]string{
@@ -88,7 +85,31 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 			},
 		},
 		"temperature": 0.1,
-		"max_tokens":  500,
+		"max_tokens":  1000,
+		"response_format": map[string]interface{}{
+			"type": "json_object",
+			"schema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"results": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"supi": map[string]string{
+									"type": "string",
+								},
+								"anomaly_score": map[string]string{
+									"type": "number",
+								},
+							},
+							"required": []string{"supi", "anomaly_score"},
+						},
+					},
+				},
+				"required": []string{"results"},
+			},
+		},
 	}
 
 	jsonData, err := json.Marshal(openAIReq)
@@ -148,10 +169,10 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 	// Parse the content as our BatchInferenceResult
 	content := openAIResp.Choices[0].Message.Content
 	logger.AnalyzerLog.Infof("[LLMClient] Raw LLM content (length=%d chars): %s", len(content), content)
-	
+
 	// Clean potential markdown formatting and extract JSON
 	content = strings.TrimSpace(content)
-	
+
 	// Remove markdown code blocks (```json ... ``` or ``` ... ```)
 	if strings.Contains(content, "```") {
 		// Remove opening ```json or ```
@@ -161,7 +182,7 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 		content = strings.TrimSuffix(content, "```")
 		content = strings.TrimSpace(content)
 	}
-	
+
 	// Try to extract JSON object if wrapped in text
 	if idx := strings.Index(content, "{"); idx >= 0 {
 		content = content[idx:]
@@ -169,7 +190,7 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 	if idx := strings.LastIndex(content, "}"); idx >= 0 {
 		content = content[:idx+1]
 	}
-	
+
 	logger.AnalyzerLog.Infof("[LLMClient] Cleaned JSON content (length=%d chars): %s", len(content), content)
 
 	var result models.BatchInferenceResult
@@ -181,31 +202,17 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 		} else {
 			logger.AnalyzerLog.Warnf("[LLMClient] Content is EMPTY!")
 		}
-		
+
 		// If parsing fails, create default results for fail-open
 		logger.AnalyzerLog.Warnf("[LLMClient] Using fail-open: returning default 'normal' results for %d UEs", len(records))
 		return c.createDefaultBatchResult(records), nil
 	}
 
-	// Validate and fill in missing fields
-	now := time.Now().Unix()
-	for i, res := range result.Results {
-		if res.UeIp == "" && i < len(records) {
-			res.UeIp = records[i].UeIp
-		}
-		if res.Supi == "" && i < len(records) {
-			res.Supi = records[i].Supi
-		}
-		if res.Timestamp == 0 {
-			res.Timestamp = now
-		}
-		if res.Prediction == "" {
-			res.Prediction = "normal"
-		}
+	// Validate results
+	if len(result.Results) == 0 {
+		logger.AnalyzerLog.Warnf("[LLMClient] LLM returned empty results array")
+		return c.createDefaultBatchResult(records), nil
 	}
-	
-	result.BatchSize = len(result.Results)
-	result.Timestamp = now
 
 	logger.AnalyzerLog.Infof("[LLMClient] ✓ Successfully parsed %d UE results from LLM", len(result.Results))
 	return &result, nil
@@ -214,24 +221,14 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 // createDefaultBatchResult creates default "normal" results for fail-open when parsing fails
 func (c *LLMClient) createDefaultBatchResult(records []*models.UeTrafficRecord) *models.BatchInferenceResult {
 	results := make([]*models.InferenceResult, len(records))
-	now := time.Now().Unix()
 	for i, record := range records {
 		results[i] = &models.InferenceResult{
-			UeIp:         record.UeIp,
 			Supi:         record.Supi,
-			Timestamp:    now,
-			IsAnomaly:    false,
-			AnomalyScore: 0.0,
-			Prediction:   "normal",
-			Confidence:   0.5, // Low confidence since it's a fallback
-			ModelVersion: "llm-parse-failed-fallback",
+			AnomalyScore: 0.1, // Default low risk score for fail-open
 		}
 	}
 	return &models.BatchInferenceResult{
-		Results:      results,
-		Timestamp:    now,
-		BatchSize:    len(results),
-		ModelVersion: "fail-open",
+		Results: results,
 	}
 }
 

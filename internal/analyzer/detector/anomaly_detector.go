@@ -151,10 +151,10 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 	for _, result := range allResults {
 		msg := queue.NewInferenceResultMessage(result)
 		if err := d.exportQueue.EnqueueExport(msg); err != nil {
-			logger.AnalyzerLog.Errorf("[AnomalyDetector] Failed to enqueue inference result for %s: %v", result.UeIp, err)
+			logger.AnalyzerLog.Errorf("[AnomalyDetector] Failed to enqueue inference result for %s: %v", result.Supi, err)
 		} else {
-			logger.AnalyzerLog.Infof("[AnomalyDetector] Analysis complete - UE: %s | Prediction: %s | Score: %.2f | Confidence: %.2f",
-				result.UeIp, result.Prediction, result.AnomalyScore, result.Confidence)
+			logger.AnalyzerLog.Infof("[AnomalyDetector] Analysis complete - SUPI: %s | Anomaly Score: %.3f",
+				result.Supi, result.AnomalyScore)
 		}
 	}
 
@@ -165,17 +165,10 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 // createDefaultResults creates default "Normal" inference results for fail-open mechanism
 func (d *AnomalyDetector) createDefaultResults(records []*models.UeTrafficRecord) []*models.InferenceResult {
 	results := make([]*models.InferenceResult, len(records))
-	now := time.Now().Unix()
 	for i, record := range records {
 		results[i] = &models.InferenceResult{
-			UeIp:         record.UeIp,
 			Supi:         record.Supi,
-			Timestamp:    now,
-			IsAnomaly:    false,
-			AnomalyScore: 0.0,
-			Prediction:   "normal",
-			Confidence:   1.0,
-			ModelVersion: "fail-open-default",
+			AnomalyScore: 0.1, // Default low risk score
 		}
 	}
 	return results

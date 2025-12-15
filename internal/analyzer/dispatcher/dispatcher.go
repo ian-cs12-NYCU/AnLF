@@ -82,8 +82,8 @@ func (d *ExportDispatcher) handleInferenceResult(msg *queue.ExportMessage) error
 		return fmt.Errorf("inference exporter failed: %w", err)
 	}
 
-	logger.AnalyzerLog.Debugf("Exported inference result for UE %s: %s via %s",
-		result.UeIp, result.Prediction, d.inferenceExporter.Name())
+	logger.AnalyzerLog.Debugf("Exported inference result for SUPI %s: score %.3f via %s",
+		result.Supi, result.AnomalyScore, d.inferenceExporter.Name())
 	return nil
 }
 

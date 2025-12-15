@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -43,10 +42,9 @@ func NewInferenceResultExporter(baseDir string) (*InferenceResultExporter, error
 		writer: writer,
 	}
 
-	// Write header
+	// Write header (simplified format)
 	header := []string{
-		"timestamp", "supi", "ue_ip",
-		"is_anomaly", "anomaly_score", "prediction", "confidence", "model_version",
+		"supi", "anomaly_score",
 	}
 	if err := writer.Write(header); err != nil {
 		file.Close()
@@ -69,14 +67,8 @@ func (e *InferenceResultExporter) Export(data interface{}) error {
 	defer e.mu.Unlock()
 
 	row := []string{
-		strconv.FormatInt(result.Timestamp, 10),
 		result.Supi,
-		result.UeIp,
-		strconv.FormatBool(result.IsAnomaly),
-		fmt.Sprintf("%.4f", result.AnomalyScore),
-		result.Prediction,
-		fmt.Sprintf("%.4f", result.Confidence),
-		result.ModelVersion,
+		fmt.Sprintf("%.3f", result.AnomalyScore),
 	}
 
 	if err := e.writer.Write(row); err != nil {

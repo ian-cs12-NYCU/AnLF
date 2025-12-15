@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -201,56 +202,92 @@ func newMockLLMServer(shouldFail bool, delay time.Duration) *httptest.Server {
 			return
 		}
 
-		// Handle batch predictions
-		if r.URL.Path == "/predict_batch" {
-			var req models.BatchInferenceRequest
+		// Handle OpenAI Chat Completions API
+		if r.URL.Path == "/v1/chat/completions" {
+			var req map[string]interface{}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
 
-			results := make([]*models.InferenceResult, len(req.Records))
-			for i, record := range req.Records {
+			// Extract messages from request
+			messages, ok := req["messages"].([]interface{})
+			if !ok || len(messages) == 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			// Get user message (should contain UE traffic data)
+			userMsg, ok := messages[len(messages)-1].(map[string]interface{})
+			if !ok {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			content, ok := userMsg["content"].(string)
+			if !ok {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			// Parse UE records from content (it's a formatted prompt, so extract JSON part)
+			// The content format is: "Analyze... Return...\n\n[JSON array]"
+			jsonStart := strings.Index(content, "[")
+			jsonEnd := strings.LastIndex(content, "]")
+			if jsonStart < 0 || jsonEnd < 0 || jsonStart >= jsonEnd {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			jsonStr := content[jsonStart : jsonEnd+1]
+			var records []*models.UeTrafficRecord
+			if err := json.Unmarshal([]byte(jsonStr), &records); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			if len(records) == 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			// Generate results
+			results := make([]*models.InferenceResult, len(records))
+			for i, record := range records {
 				results[i] = &models.InferenceResult{
-					UeIp:         record.UeIp,
 					Supi:         record.Supi,
-					Timestamp:    record.Timestamp,
-					IsAnomaly:    true,
-					AnomalyScore: 0.75,
-					Prediction:   "attack",
-					Confidence:   0.85,
-					ModelVersion: "test-v1.0",
+					AnomalyScore: 0.85,
 				}
 			}
 
-			resp := models.BatchInferenceResult{
-				Results:      results,
-				Timestamp:    req.Timestamp,
-				BatchSize:    len(results),
-				ModelVersion: "test-v1.0",
+			// Build OpenAI response format
+			responseContent := map[string]interface{}{
+				"results": results,
+			}
+			contentBytes, _ := json.Marshal(responseContent)
+
+			openAIResp := map[string]interface{}{
+				"choices": []map[string]interface{}{
+					{
+						"message": map[string]interface{}{
+							"content": string(contentBytes),
+						},
+					},
+				},
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			json.NewEncoder(w).Encode(openAIResp)
 			return
 		}
 
-		// Handle single prediction (legacy)
-		var req models.InferenceRequest
-		json.NewDecoder(r.Body).Decode(&req)
-
-		resp := models.InferenceResult{
-			UeIp:         req.Record.UeIp,
-			Supi:         req.Record.Supi,
-			Timestamp:    req.Record.Timestamp,
-			IsAnomaly:    true,
-			AnomalyScore: 0.75,
-			Prediction:   "attack",
-			Confidence:   0.85,
-			ModelVersion: "test-v1.0",
+		// Handle health check
+		if r.URL.Path == "/health" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		w.WriteHeader(http.StatusNotFound)
 	}))
 }

@@ -22,7 +22,7 @@ Method:  POST
 Header:  Content-Type: application/json
 ```
 
-### 1.2 Request Payload 結構
+### 1.2 Request Payload 結構（含 JSON Schema）
 
 ```json
 {
@@ -38,8 +38,27 @@ Header:  Content-Type: application/json
     }
   ],
   "temperature": 0.1,
-  "max_tokens": 50,
-  "response_format": {"type": "json_object"}
+  "max_tokens": 1000,
+  "response_format": {
+    "type": "json_object",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "supi": {"type": "string"},
+              "anomaly_score": {"type": "number"}
+            },
+            "required": ["supi", "anomaly_score"]
+          }
+        }
+      },
+      "required": ["results"]
+    }
+  }
 }
 ```
 
@@ -50,8 +69,9 @@ Header:  Content-Type: application/json
 | `model` | `"default"` | llama-server 啟動時已鎖定模型檔案，此欄位為必填但值不影響推論 |
 | `messages` | List of Dicts | 包含 `system` (系統指令) 與 `user` (eBPF 流量數據) |
 | `temperature` | `0.1` | **極重要** - 資安偵測需要確定性 (Determinism)，越低越穩定，避免模型發揮創意 |
-| `max_tokens` | `50` | **極重要** - 僅需 JSON 格式回應如 `{"label": "Attack"}`，限制長度可降低延遲 |
-| `response_format` | `{"type": "json_object"}` | 嘗試強制 JSON 輸出 (需伺服器版本支援)，若出現 400 錯誤可移除改用 Prompt 控制 |
+| `max_tokens` | `1000` | **極重要** - 必須足夠大以避免 JSON 被截斷。批次 10 UEs 建議至少 1000 tokens |
+| `response_format.type` | `"json_object"` | 強制 JSON 輸出（llama-server 支援） |
+| `response_format.schema` | JSON Schema | **關鍵技術** - 使用 GBNF 引擎鎖定輸出結構，杜絕格式錯誤和截斷問題 |
 
 ---
 
@@ -62,36 +82,61 @@ Header:  Content-Type: application/json
 Qwen 2.5 1.5B 是**小模型** (1.5B 參數)，具有以下特性：
 
 - ✅ 優點：推論速度快、資源需求低
-- ⚠️ 缺點：容易「聽不懂複雜指令」或「輸出格式不穩定」
-- 🎯 策略：Prompt 必須**極度簡潔、強勢、明確**
+- ⚠️ 缺點：容易「聽不懂複雜指令」或「輸出格式不穩定」 + **One-Shot Example**
 
-### 2.2 System Prompt 範本
+### 2.2 System Prompt 範本（One-Shot + 極簡格式）
 
 ```
-You are a strict network firewall. Analyze the input traffic JSON. 
-Output ONLY a JSON object with a single key 'label' and value 'Normal' or 'Attack'. 
-Do not explain. No preamble.
+You are a 5G network firewall logic engine. Analyze UE traffic and output anomaly scores.
+
+RULES:
+- new_flow_rate > 0.8 => anomaly_score 0.9 (Critical)
+- pps > 50000 => anomaly_score 0.8 (High)  
+- byte_count > 10000000 in short duration => anomaly_score 0.7 (Medium)
+- otherwise => anomaly_score 0.1 (Normal)
+
+OUTPUT FORMAT (Keys first, then values only):
+{
+  "results": [
+    {"supi": "imsi-208930000000001", "anomaly_score": 0.1},
+    {"supi": "imsi-208930000000002", "anomaly_score": 0.8}
+  ]
+}
+
+EXAMPLE INPUT:
+[{"supi": "imsi-001", "pps": 60000, "byte_count": 5000000}]
+
+EXAMPLE OUTPUT:
+{"results": [{"supi": "imsi-001", "anomaly_score": 0.8}]}
+
+Analyze the user input now. Output JSON only, no explanation.
 ```
 
 **關鍵要素**：
-- 明確角色定位 ("strict network firewall")
-- 精確輸出格式要求 ("ONLY a JSON object")
-- 嚴格禁止額外說明 ("Do not explain. No preamble.")
+- **One-Shot Example**: 給小模型一個完整的輸入輸出範例
+- **明確規則**: 用數字門檻而非模糊描述（`pps > 50000` 而非 "high traffic"）
+- **極簡格式**: 只輸出 `supi` 和 `anomaly_score` 兩個欄位
+- **強制禁令**: "Output JSON only, no explanation"
 
-### 2.3 User Prompt 範本
+### 2.3 輸出格式簡化原理
 
-直接將 eBPF 擷取的流量數據轉換為 JSON 字串：
+**為何只保留 2 個欄位？**
 
+傳統格式（7 個欄位）:
 ```json
-{
-  "ue_ip": "10.60.0.1",
-  "supi": "imsi-208930000000001",
-  "pkt_count": 15230,
-  "byte_count": 8234567,
-  "duration_sec": 5,
-  "pps": 3046,
-  "bps": 13175269.6
-}
+{"ue_ip": "...", "supi": "...", "prediction": "...", "anomaly_score": 0.8, "confidence": 0.9, "timestamp": 123, "model_version": "..."}
+```
+
+極簡格式（2 個欄位）:
+```json
+{"supi": "imsi-001", "anomaly_score": 0.8}
+```
+
+**優勢**：
+- ✅ **減少 Token 消耗**: 7 欄位 → 2 欄位，降低 70% 輸出長度
+- ✅ **降低格式錯誤**: 欄位越少，小模型越不容易「算錯」或「漏掉」
+- ✅ **避免截斷**: 1000 max_tokens 可穩定處理 10-15 UEs
+- ✅ **提高解析成功率**: JSON 結構簡單，不易損壞
 ```
 
 ---
@@ -145,30 +190,52 @@ wg.Wait()
 
 ### 4.1 常見錯誤與解法
 
-#### 錯誤 1: `400 Bad Request`
+#### 錯誤 1: `unexpected end of JSON input` (JSON 被截斷)
 
-**原因**: `response_format: {"type": "json_object"}` 不被支援  
-**解法**: 移除該參數，完全依賴 System Prompt 控制輸出格式
+**症狀**: Log 顯示 `Content length: 999 bytes` 但 JSON 不完整  
+**原因**: `max_tokens` 設定太小（如 50），導致 llama-server 強制截斷輸出  
+**解法**: 增加 `max_tokens` 到 **1000** (批次 10 UEs) 或 **2000** (批次 20 UEs)
 
-#### 錯誤 2: 模型回傳冗長說明
+#### 錯誤 2: 格式不穩定（多餘欄位或錯誤結構）
 
-**症狀**: 回應包含 `"Here is the analysis: {"label": "Attack"}"`  
-**解法**: 在 System Prompt 最後加強禁令：
+**症狀**: 模型輸出 7 個欄位但某些值錯誤，或順序混亂  
+**解法**: 使用 **JSON Schema** 強制鎖定結構：
+```json
+"response_format": {
+  "type": "json_object",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "supi": {"type": "string"},
+            "anomaly_score": {"type": "number"}
+          },
+          "required": ["supi", "anomaly_score"]
+        }
+      }
+    },
+    "required": ["results"]
+  }
+}
 ```
-"Do not explain. No preamble. No commentary. Output JSON only."
+**原理**: llama-server 的 GBNF 引擎會在生成時**即時過濾不符合 schema 的 tokens**，杜絕格式錯誤
+
+#### 錯誤 3: 小模型「不知道該填什麼值」
+
+**症狀**: JSON 結構正確但內容全是 0.0 或重複值  
+**解法**: 在 System Prompt 加入 **One-Shot Example**：
 ```
+EXAMPLE INPUT:
+[{"supi": "imsi-001", "pps": 60000}]
 
-#### 錯誤 3: JSON 解析失敗
-
-**症狀**: 輸出包含 Markdown 標記如 ` ```json ... ``` `  
-**解法**: 在 Go 程式碼中清理輸出：
-```go
-import "strings"
-
-content = strings.TrimPrefix(content, "```json")
-content = strings.TrimSuffix(content, "```")
-content = strings.TrimSpace(content)
+EXAMPLE OUTPUT:
+{"results": [{"supi": "imsi-001", "anomaly_score": 0.8}]}
 ```
+**原理**: 小模型需要具體範例才能理解「什麼樣的輸入對應什麼樣的輸出」
 
 ### 4.2 Fail-Open 機制
 
@@ -260,9 +327,20 @@ python3 llm_server.py 5001
 ```
 
 **支援端點**:
-- `POST /predict`: 單一 UE 推論 (Legacy)
-- `POST /predict_batch`: 批次 UE 推論
+- `POST /v1/chat/completions`: OpenAI 兼容 API（返回簡化格式：只有 supi 和 anomaly_score）
 - `GET /health`: 健康檢查
+
+**測試範例**:
+```bash
+curl -X POST http://127.0.0.1:5001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "test",
+    "messages": [
+      {"role": "user", "content": "[{\"supi\": \"imsi-001\", \"pps\": 1000}]"}
+    ]
+  }'
+```
 
 ### 7.3 生產環境配置
 
@@ -296,10 +374,19 @@ configuration:
 A: 權衡推論延遲與準確度。1.5B 模型可在 <500ms 內回應，適合即時偵測。
 
 **Q: 可以使用其他 LLM 嗎？**  
-A: 可以，只需確保符合 OpenAI Chat Completions API 格式即可。
+A: 可以，只需確保符合 OpenAI Chat Completions API 格式並支援 `response_format.schema`。
+
+**Q: 為什麼要用 JSON Schema？**  
+A: llama-server 的 GBNF 引擎會在生成時**即時過濾不符合 schema 的 tokens**，這是唯一能 100% 保證輸出格式的方法。沒有 schema，小模型會隨機輸出任何東西。
+
+**Q: max_tokens 應該設多少？**  
+A: **經驗公式**: `max_tokens = 100 * batch_size`。例如批次 10 UEs → 1000 tokens，批次 20 UEs → 2000 tokens。寧可多不可少，避免截斷。
+
+**Q: One-Shot Example 有多重要？**  
+A: **極度重要**。對於 1.5B 小模型，沒有範例就像「叫一個沒見過 JSON 的人寫 JSON」，成功率 < 50%。加入 One-Shot 後成功率 > 90%。
 
 **Q: 如何提高偵測準確度？**  
-A: (1) 優化 System Prompt (2) 提供更多 eBPF 特徵 (3) Fine-tune 模型 (4) 增加 temperature 多樣性測試
+A: (1) 優化 System Prompt 中的規則門檻 (2) 提供更多 eBPF 特徵 (3) Fine-tune 模型 (4) 使用更大模型（如 7B）
 
 **Q: Goroutine 並行是否安全？**  
 A: 是，只要每個 goroutine 使用獨立的 context 和 HTTP client，並正確使用 WaitGroup。

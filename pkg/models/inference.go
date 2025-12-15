@@ -15,22 +15,13 @@ type BatchInferenceRequest struct {
 	BatchSize    int                `json:"batch_size"`
 }
 
-// InferenceResult represents the result from LLM server
+// InferenceResult represents the result from LLM server (simplified format)
 type InferenceResult struct {
-	UeIp         string  `json:"ue_ip"`
 	Supi         string  `json:"supi"`
-	Timestamp    int64   `json:"timestamp"`
-	IsAnomaly    bool    `json:"is_anomaly"`
 	AnomalyScore float64 `json:"anomaly_score"` // 0.0 - 1.0
-	Prediction   string  `json:"prediction"`    // "normal" or "attack"
-	Confidence   float64 `json:"confidence"`    // 0.0 - 1.0
-	ModelVersion string  `json:"model_version,omitempty"`
 }
 
-// BatchInferenceResult represents batch results from LLM server
+// BatchInferenceResult represents batch results from LLM server (simplified format)
 type BatchInferenceResult struct {
-	Results      []*InferenceResult `json:"results"` // Individual UE results
-	Timestamp    int64              `json:"timestamp"`
-	BatchSize    int                `json:"batch_size"`
-	ModelVersion string             `json:"model_version,omitempty"`
+	Results []*InferenceResult `json:"results"` // Individual UE results
 }
