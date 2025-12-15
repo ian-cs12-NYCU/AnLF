@@ -29,7 +29,7 @@ configuration:
   
   anomalyDetection:
     enable: true  # Set to true to enable LLM-based anomaly detection
-    serverUrl: http://127.0.0.1:5000  # LLM server endpoint
+    serverUrl: http://127.0.0.1:5001  # LLM server endpoint
     timeout: 5  # Request timeout in seconds
     systemPromptPath: ./prompts/anomaly_detection_basic.txt  # Path to system prompt file
 

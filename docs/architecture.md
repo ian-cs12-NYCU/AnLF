@@ -52,15 +52,15 @@ graph TB
     eBPF -->|Raw Metrics| Monitor
     SMF -.->|UE Info<br/>IP-SUPI Mapping| Monitor
     
-    Monitor -->|Feature Vectors<br/>via Channel| Analyzer
-    Analyzer -->|Traffic Record| ExpQueue
-    Analyzer -->|UeTrafficRecord| InfQueue
+    Monitor -->|BatchUeTrafficRecords<br/>via Channel<br/>All UEs per cycle| Analyzer
+    Analyzer -->|BatchTrafficRecords| ExpQueue
+    Analyzer -->|Batch UeTrafficRecord| InfQueue
     
     InfQueue -->|Worker| Detector
-    Detector -->|Predict| LLMClient
-    LLMClient -->|POST /predict| LLMServer
-    LLMServer -->|InferenceResult| LLMClient
-    Detector -->|InferenceResult| ExpQueue
+    Detector -->|PredictBatch| LLMClient
+    LLMClient -->|POST /predict_batch<br/>All UEs in 1 request| LLMServer
+    LLMServer -->|BatchInferenceResult| LLMClient
+    Detector -->|InferenceResult<br/>per UE| ExpQueue
     
     ExpQueue -->|Worker| Dispatcher
     Dispatcher -->|TrafficRecord| CSV
@@ -114,34 +114,40 @@ sequenceDiagram
         Note over K: 讀取後清空 Map
         
         M->>M: 遍歷所有已知 UE
+        Note over M: 收集所有 UE 到批次
         
         loop For Each UE
-            M->>M: ConvertToTrafficRecord()<br/>計算特徵向量
-            M->>C: Send (Non-blocking)
-            
-            alt Channel Full
-                M->>M: Drop record & Log warning
-            end
+            M->>M: ConvertToTrafficRecord()<br/>計算特徵向量<br/>加入 batch.Records
+        end
+        
+        M->>C: Send BatchUeTrafficRecords<br/>(Single message for all UEs)
+        
+        alt Channel Full
+            M->>M: Drop batch & Log warning
         end
     end
     
     loop Analyzer Processing Loop
-        C->>A: Receive Feature Vector
+        C->>A: Receive BatchUeTrafficRecords
+        Note over A: 處理整批 UE 數據
         
         par Export Pipeline
-            A->>EQ: Enqueue TrafficRecord
+            A->>EQ: Enqueue BatchTrafficRecords
         and Inference Pipeline
-            A->>IQ: Enqueue Record
+            A->>IQ: EnqueueBatch([]*UeTrafficRecord)
         end
     end
     
     par Inference Processing
         loop Inference Worker
-            IQ->>D: Dequeue Record
-            D->>LC: Predict(ctx, record)
-            LC->>LS: POST /predict (JSON)
-            LS-->>LC: InferenceResult
-            D->>EQ: Enqueue InferenceResult
+            IQ->>D: Dequeue Batch
+            D->>LC: PredictBatch(ctx, records)
+            LC->>LS: POST /predict_batch JSON<br/>All UEs in single request
+            LS-->>LC: BatchInferenceResult
+            Note over D: 遍歷批次結果
+            loop For Each Result
+                D->>EQ: Enqueue InferenceResult
+            end
         end
     and Export Processing
         loop Export Workers (4 parallel)
@@ -149,9 +155,12 @@ sequenceDiagram
             EW->>ED: Handle(msg)
             ED->>ED: Route by msg.Type
             
-            alt TrafficRecord
-                ED->>E: CsvExporter.Export()
-                E->>F: Write CSV row
+            alt BatchTrafficRecords
+                ED->>E: CsvExporter.exportBatch()
+                Note over E: Sort by SUPI
+                loop For Each Sorted Record
+                    E->>F: Write CSV row
+                end
             else InferenceResult
                 ED->>E: InferenceResultExporter.Export()
                 E->>F: Write JSON/JSONL row
@@ -251,13 +260,13 @@ graph TB
 %%{init: {'theme':'neutral'}}%%
 graph TB
     subgraph "Producer"
-        FA[FlowAnalyzer<br/>生產者]
+        FA[FlowAnalyzer<br/>生產者<br/>接收批次資料]
     end
     
     subgraph "Dual Pipeline System"
         direction TB
-        FA --> ExpQueue["ExportQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
-        FA --> InfQueue["InferenceQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
+        FA -->|BatchTrafficRecords| ExpQueue["ExportQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
+        FA -->|Batch Records| InfQueue["InferenceQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
         
         subgraph "Export Workers"
             EW1[Worker 1]
@@ -281,12 +290,12 @@ graph TB
     end
     
     subgraph "Inference Processing"
-        IW1 -->|detector.Handle| Detector["AnomalyDetector<br/>---<br/>LLM 推論"]
-        IW2 -->|detector.Handle| Detector
+        IW1 -->|detector.HandleBatch| Detector["AnomalyDetector<br/>---<br/>LLM 批次推論"]
+        IW2 -->|detector.HandleBatch| Detector
         
-        Detector -->|LLMClient.Predict| LLMServer["LLM Server<br/>:5000<br/>POST /predict"]
+        Detector -->|LLMClient.PredictBatch| LLMServer["LLM Server<br/>:5001<br/>POST /predict_batch<br/>All UEs in 1 request"]
         
-        Detector -->|InferenceResult| ExpQueue
+        Detector -->|Per-UE InferenceResult| ExpQueue
     end
     
     subgraph "Export Processing"
@@ -296,20 +305,20 @@ graph TB
         EW4 --> Disp
         
         subgraph "Export Types"
-            TR["MessageType:<br/>TrafficRecord"]
+            BTR["MessageType:<br/>BatchTrafficRecords"]
             IR["MessageType:<br/>InferenceResult"]
         end
         
-        Disp -->|Route| TR
+        Disp -->|Route| BTR
         Disp -->|Route| IR
     end
     
     subgraph "Exporters (Output)"
-        CSV[CsvExporter<br/>traffic_*.csv]
+        CSV[CsvExporter<br/>traffic_*.csv<br/>Sort by SUPI]
         InfExp[InferenceResultExporter<br/>inference_*.jsonl]
     end
     
-    TR --> CSV
+    BTR --> CSV
     IR --> InfExp
     
     style ExpQueue fill:#ffdd99
@@ -517,15 +526,32 @@ type UeTrafficRecord struct {
 }
 ```
 
-### Inference Request & Result
+### Batch Processing Data Structures
 ```go
-// LLM 推論請求
-type InferenceRequest struct {
-    Record    *UeTrafficRecord `json:"record"`      // 流量記錄
-    Timestamp int64            `json:"timestamp"`   // 時戳
+// 批次流量記錄
+type BatchUeTrafficRecords struct {
+    Records   []*UeTrafficRecord `json:"records"`   // 所有 UE 記錄
+    Timestamp int64              `json:"timestamp"` // 批次時戳
+    BatchSize int                `json:"batch_size"` // UE 數量
 }
 
-// LLM 推論結果
+// LLM 批次推論請求
+type BatchInferenceRequest struct {
+    SystemPrompt string              `json:"system_prompt,omitempty"` // 系統提示詞
+    Records      []*UeTrafficRecord  `json:"records"`   // 所有 UE 流量記錄
+    Timestamp    int64               `json:"timestamp"` // 時戳
+    BatchSize    int                 `json:"batch_size"` // UE 數量
+}
+
+// LLM 批次推論結果
+type BatchInferenceResult struct {
+    Results      []*InferenceResult `json:"results"`    // 所有 UE 推論結果
+    Timestamp    int64              `json:"timestamp"`  // 時戳
+    BatchSize    int                `json:"batch_size"` // UE 數量
+    ModelVersion string             `json:"model_version,omitempty"` // 模型版本
+}
+
+// 單一 UE 推論結果
 type InferenceResult struct {
     UeIp         string  `json:"ue_ip"`          // UE IP
     Supi         string  `json:"supi"`           // UE identifier
@@ -541,23 +567,25 @@ type InferenceResult struct {
 ### Export Message Structure
 ```go
 type ExportMessage struct {
-    Type MessageType  // "traffic_record" 或 "inference_result"
+    Type MessageType  // "batch_traffic_records" 或 "inference_result"
     Data interface{}  // 實際資料內容
 }
 
-// 範例：流量記錄訊息
+// 範例：批次流量記錄訊息
 {
-    Type: "traffic_record",
-    Data: &UeTrafficRecord{
+    Type: "batch_traffic_records",
+    Data: &BatchUeTrafficRecords{
+        Records: []*UeTrafficRecord{
+            {Timestamp: 1702649400, Supi: "imsi-001010000000001", UeIp: "60.60.0.1", ...},
+            {Timestamp: 1702649400, Supi: "imsi-001010000000002", UeIp: "60.60.0.2", ...},
+            ...
+        },
         Timestamp: 1702649400,
-        Supi:      "imsi-001010000000001",
-        UeIp:      "60.60.0.1",
-        LogPPS:    4.5,
-        ...
+        BatchSize: 20,
     }
 }
 
-// 範例：推論結果訊息
+// 範例：推論結果訊息（單一 UE）
 {
     Type: "inference_result",
     Data: &InferenceResult{
@@ -595,14 +623,26 @@ configuration:
 ### User Space 層
 - **Non-blocking Channel**: 防止 eBPF 讀取被阻塞
 - **ReadAndReset()**: 原子讀取後清空，避免重複計數
-- **Buffered Channel**: 1024 容量緩衝，應對流量突發
+- **Batch Channel**: 128 容量緩衝 (批次模式，每訊息包含多個 UE)
+- **Batch Processing**: 所有 UE 數據打包為單一批次，減少通道操作與鎖競爭
 
 ### Export Message Queue
 - **Large Buffer**: 10000 訊息容量，處理高流量突發
 - **Multi-Worker**: 4 個並行 goroutines，提升吞吐量
 - **Type-based Routing**: 根據 MessageType 動態分發到不同 exporter
+  - `batch_traffic_records`: 批次流量記錄，CsvExporter 按 SUPI 排序後寫入
+  - `inference_result`: 單一 UE 推論結果
+- **Batch CSV Export**: CsvExporter 接收批次後按 SUPI 排序，確保輸出順序一致
 - **Graceful Drain**: 關閉時確保所有佇列訊息都被處理
 - **Monitoring**: 每 30 秒報告佇列利用率，超過 80% 發出警告
+
+### Inference Queue (LLM Pipeline)
+- **Batch Inference**: 單一 HTTP 請求包含所有 UE 數據，大幅降低網路開銷
+  - 原架構: N 個 UE × 每秒 → N 個 HTTP 請求/秒
+  - 批次架構: N 個 UE × 每秒 → 1 個 HTTP 請求/秒 (包含 N 個 UE)
+- **Dynamic Batch Size**: 批次大小依實際 UE 數量動態調整，不固定於 20
+- **POST /predict_batch**: LLM Server 批次端點，接收 BatchInferenceRequest
+- **Result Distribution**: 批次推論結果拆分為個別 UE 結果，逐一寫入 ExportQueue
 
 ### 資料完整性
 - **Zero-filling**: 沒有流量的 UE 也會產生零值記錄
@@ -642,12 +682,13 @@ configuration:
    - CsvExporter (流量記錄)
    - InferenceResultExporter (推論結果)
 
-5. **InferenceQueue & AnomalyDetector** ✨ **新**
+5. **InferenceQueue & AnomalyDetector** ✨ **批次處理**
    - 10000 容量 buffered channel
    - 2 個並行 worker (可配置)
    - LLMClient HTTP 客戶端
-   - 向外部 LLM Server POST /predict
-   - 結果寫回 ExportQueue
+   - 向外部 LLM Server POST /predict_batch (批次推論)
+   - 單一請求包含所有 UE 數據，減少 HTTP 開銷
+   - 結果逐一寫回 ExportQueue
 
 6. **配置系統**
    - YAML 配置文件
@@ -705,9 +746,13 @@ anomalyDetection:
 
 2. 啟動 LLM 推論伺服器:
    ```bash
-   # 服務必須在 http://127.0.0.1:5000 監聽
-   # 實作 POST /predict 端點
+   # 服務必須在 http://127.0.0.1:5001 監聽
+   # 實作 POST /predict_batch 端點 (批次推論)
    # 實作 GET /health 端點
+   
+   # 範例：啟動 mock LLM server
+   cd test_LLM_server
+   python3 llm_server.py 5001
    ```
 
 3. 啟動 AnLF:
@@ -725,25 +770,29 @@ anomalyDetection:
     [eBPF Map: UE → Metrics]
         ↓
 [TrafficMonitor - Poll Every 1-5s]
+        ↓ (收集所有 UE 為單一批次)
+    [Feature Channel] (capacity: 128, BatchUeTrafficRecords)
         ↓
-    [Feature Channel] (capacity: 1024)
-        ↓
-[FlowAnalyzer - Process Features]
-    ├─→ [ExportQueue] 
+[FlowAnalyzer - Process Batch]
+    ├─→ [ExportQueue] (BatchTrafficRecords 消息)
     │       ├─ 4 Workers → [ExportDispatcher] 
-    │       │   ├─→ TrafficRecord → [CsvExporter] → traffic_*.csv
+    │       │   ├─→ BatchTrafficRecords → [CsvExporter]
+    │       │   │       └─→ Sort by SUPI → traffic_*.csv
     │       │   └─→ InferenceResult → [InferenceResultExporter] → inference_*.jsonl
     │       └─ Buffered Channel (capacity: 10000)
     │
-    └─→ [InferenceQueue] (if enabled)
-            ├─ 2 Workers → [AnomalyDetector]
-            │   ├─→ [LLMClient]
-            │   │       └─→ POST http://127.0.0.1:5000/predict
+    └─→ [InferenceQueue] (if enabled, []*UeTrafficRecord)
+            ├─ 2 Workers → [AnomalyDetector.HandleBatch]
+            │   ├─→ [LLMClient.PredictBatch]
+            │   │       └─→ POST http://127.0.0.1:5001/predict_batch
+            │   │           (單一請求包含所有 UE)
             │   │           ↓
             │   │       [LLM Server]
             │   │           ↓
-            │   │       InferenceResult
-            │   └─→ [ExportQueue] (feedback loop)
+            │   │       BatchInferenceResult
+            │   │           ↓
+            │   │       逐一拆分為 InferenceResult
+            │   └─→ [ExportQueue] (feedback loop, per UE)
             └─ Buffered Channel (capacity: 10000)
 ```
 

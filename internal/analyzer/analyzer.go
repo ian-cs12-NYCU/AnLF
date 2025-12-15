@@ -11,7 +11,7 @@ import (
 )
 
 type FlowAnalyzer struct {
-	featureChan     <-chan *models.UeTrafficRecord
+	featureChan     <-chan *models.BatchUeTrafficRecords
 	exportQueue     *queue.ExportQueue
 	anomalyDetector AnomalyDetector
 	stopChan        chan struct{}
@@ -19,12 +19,12 @@ type FlowAnalyzer struct {
 }
 
 type AnomalyDetector interface {
-	EnqueueRecord(record *models.UeTrafficRecord) error
+	EnqueueBatch(records []*models.UeTrafficRecord) error
 	IsEnabled() bool
 }
 
 func NewFlowAnalyzer(
-	featureChan <-chan *models.UeTrafficRecord,
+	featureChan <-chan *models.BatchUeTrafficRecords,
 	exportQueue *queue.ExportQueue,
 	anomalyDetector AnomalyDetector,
 ) *FlowAnalyzer {
@@ -75,31 +75,38 @@ func (a *FlowAnalyzer) processLoop(ctx context.Context) {
 		case <-a.stopChan:
 			logger.AnalyzerLog.Info("FlowAnalyzer stop signal received")
 			return
-		case record, ok := <-a.featureChan:
+		case batch, ok := <-a.featureChan:
 			if !ok {
 				logger.AnalyzerLog.Info("Feature channel closed")
 				return
 			}
-			a.processRecord(record)
+			a.processBatch(batch)
 		}
 	}
 }
 
-func (a *FlowAnalyzer) processRecord(record *models.UeTrafficRecord) {
-	logger.AnalyzerLog.Infof("Received traffic record for UE %s (SUPI: %s)", record.UeIp, record.Supi)
+func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
+	logger.AnalyzerLog.Infof("Received batch of %d traffic records", batch.BatchSize)
 
-	msg := queue.NewTrafficRecordMessage(record)
-	if err := a.exportQueue.EnqueueExport(msg); err != nil {
-		logger.AnalyzerLog.Errorf("Failed to enqueue record for %s: %v", record.UeIp, err)
-	} else {
-		logger.AnalyzerLog.Debugf("Enqueued traffic record for UE %s", record.UeIp)
+	// Log each UE
+	for _, record := range batch.Records {
+		logger.AnalyzerLog.Infof("Received traffic record for UE %s (SUPI: %s)", record.UeIp, record.Supi)
 	}
 
+	// Send entire batch to ExportQueue (CSV exporter will handle sorting and writing)
+	msg := queue.NewBatchTrafficRecordsMessage(batch)
+	if err := a.exportQueue.EnqueueExport(msg); err != nil {
+		logger.AnalyzerLog.Errorf("Failed to enqueue batch for export: %v", err)
+	} else {
+		logger.AnalyzerLog.Debugf("Enqueued batch of %d records for export", batch.BatchSize)
+	}
+
+	// Send entire batch to anomaly detector's inference queue for batch LLM inference
 	if a.anomalyDetector != nil && a.anomalyDetector.IsEnabled() {
-		if err := a.anomalyDetector.EnqueueRecord(record); err != nil {
-			logger.AnalyzerLog.Errorf("Failed to enqueue for anomaly detection for %s: %v", record.UeIp, err)
+		if err := a.anomalyDetector.EnqueueBatch(batch.Records); err != nil {
+			logger.AnalyzerLog.Errorf("Failed to enqueue batch for anomaly detection: %v", err)
 		} else {
-			logger.AnalyzerLog.Debugf("Enqueued for anomaly detection for UE %s", record.UeIp)
+			logger.AnalyzerLog.Debugf("Enqueued batch of %d records for anomaly detection", batch.BatchSize)
 		}
 	}
 }

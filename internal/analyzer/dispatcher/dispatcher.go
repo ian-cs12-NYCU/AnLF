@@ -29,6 +29,8 @@ func (d *ExportDispatcher) Handle(msg *queue.ExportMessage) error {
 	switch msg.Type {
 	case queue.MessageTypeTrafficRecord:
 		return d.handleTrafficRecord(msg)
+	case queue.MessageTypeBatchTrafficRecords:
+		return d.handleBatchTrafficRecords(msg)
 	case queue.MessageTypeInferenceResult:
 		return d.handleInferenceResult(msg)
 	default:
@@ -48,6 +50,21 @@ func (d *ExportDispatcher) handleTrafficRecord(msg *queue.ExportMessage) error {
 
 	logger.AnalyzerLog.Debugf("Exported traffic record for UE %s via %s",
 		record.UeIp, d.trafficExporter.Name())
+	return nil
+}
+
+func (d *ExportDispatcher) handleBatchTrafficRecords(msg *queue.ExportMessage) error {
+	batch, ok := msg.AsBatchTrafficRecords()
+	if !ok {
+		return fmt.Errorf("failed to convert message to batch traffic records")
+	}
+
+	if err := d.trafficExporter.Export(batch); err != nil {
+		return fmt.Errorf("traffic exporter failed: %w", err)
+	}
+
+	logger.AnalyzerLog.Debugf("Exported batch of %d traffic records via %s",
+		batch.BatchSize, d.trafficExporter.Name())
 	return nil
 }
 

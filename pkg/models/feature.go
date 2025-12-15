@@ -22,3 +22,10 @@ type UeTrafficRecord struct {
 	Supi      string `json:"supi" csv:"supi"`
 	UeIp      string `json:"ip" csv:"ue_ip"`
 }
+
+// BatchUeTrafficRecords represents a batch of UE traffic records collected in one monitoring cycle
+type BatchUeTrafficRecords struct {
+	Records   []*UeTrafficRecord `json:"records"`
+	Timestamp int64              `json:"timestamp"`
+	BatchSize int                `json:"batch_size"`
+}

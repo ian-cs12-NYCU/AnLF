@@ -98,6 +98,51 @@ func (c *LLMClient) Predict(ctx context.Context, record *models.UeTrafficRecord)
 	return &result, nil
 }
 
+// PredictBatch sends a batch of UE traffic records to LLM server for anomaly detection
+func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTrafficRecord) (*models.BatchInferenceResult, error) {
+	req := &models.BatchInferenceRequest{
+		SystemPrompt: c.systemPrompt,
+		Records:      records,
+		Timestamp:    time.Now().Unix(),
+		BatchSize:    len(records),
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal batch request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.serverURL+"/predict_batch", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create batch request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	logger.AnalyzerLog.Infof("[LLMClient] Sending batch inference request to %s for %d UEs", c.serverURL, len(records))
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		logger.AnalyzerLog.Warnf("[LLMClient] Failed to connect to LLM server at %s: %v", c.serverURL, err)
+		return nil, fmt.Errorf("failed to send batch request to LLM server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		logger.AnalyzerLog.Warnf("[LLMClient] LLM server returned error status %d for batch request: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("LLM server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result models.BatchInferenceResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode batch response: %w", err)
+	}
+
+	logger.AnalyzerLog.Infof("[LLMClient] Received batch inference result for %d UEs", len(result.Results))
+
+	return &result, nil
+}
+
 func (c *LLMClient) HealthCheck(ctx context.Context) error {
 	logger.AnalyzerLog.Infof("[LLMClient] Checking LLM server health at: %s", c.serverURL)
 

@@ -288,8 +288,8 @@ func (a *AnlfApp) SetShutdownTimeout(timeout time.Duration) {
 func (a *AnlfApp) initMonitoringPipeline() error {
 	logger.MainLog.Info("Initializing monitoring pipeline with message queues and anomaly detection...")
 
-	// Create feature channel
-	featureChan := make(chan *models.UeTrafficRecord, 1024)
+	// Create feature channel (batch mode - smaller buffer since each message contains 20 UEs)
+	featureChan := make(chan *models.BatchUeTrafficRecords, 128)
 
 	// Initialize Mock SMF client
 	smfClient := consumer.NewMockSMF()

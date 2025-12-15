@@ -37,12 +37,18 @@ func TestAnomalyDetector_Disabled(t *testing.T) {
 		t.Fatalf("Failed to create detector: %v", err)
 	}
 
-	record := &models.UeTrafficRecord{
-		UeIp: "60.60.0.1",
-		Supi: "imsi-001010000000001",
+	batch := []*models.UeTrafficRecord{
+		{
+			UeIp: "60.60.0.1",
+			Supi: "imsi-208930000000001",
+		},
+		{
+			UeIp: "60.60.0.2",
+			Supi: "imsi-208930000000002",
+		},
 	}
 
-	err = detector.EnqueueRecord(record)
+	err = detector.EnqueueBatch(batch)
 	if err != nil {
 		t.Fatalf("Expected no error when disabled, got: %v", err)
 	}
@@ -91,21 +97,30 @@ func TestAnomalyDetector_Success(t *testing.T) {
 	}
 	defer detector.Stop(2 * time.Second)
 
-	record := &models.UeTrafficRecord{
-		UeIp:      "60.60.0.1",
-		Supi:      "imsi-001010000000001",
-		Timestamp: 1234567890,
+	batch := []*models.UeTrafficRecord{
+		{
+			UeIp:      "60.60.0.1",
+			Supi:      "imsi-208930000000001",
+			Timestamp: 1234567890,
+		},
+		{
+			UeIp:      "60.60.0.2",
+			Supi:      "imsi-208930000000002",
+			Timestamp: 1234567890,
+		},
 	}
 
-	err = detector.EnqueueRecord(record)
+	err = detector.EnqueueBatch(batch)
 	if err != nil {
-		t.Fatalf("EnqueueRecord failed: %v", err)
+		t.Fatalf("EnqueueBatch failed: %v", err)
 	}
 
 	time.Sleep(300 * time.Millisecond)
 
-	if mockHandler.enqueueCount.Load() != 1 {
-		t.Errorf("Expected 1 export, got %d", mockHandler.enqueueCount.Load())
+	// Expect 2 exports (one per UE in the batch)
+	expectedExports := int32(2)
+	if mockHandler.enqueueCount.Load() != expectedExports {
+		t.Errorf("Expected %d exports, got %d", expectedExports, mockHandler.enqueueCount.Load())
 	}
 }
 
@@ -146,23 +161,31 @@ func TestAnomalyDetector_MultipleRecords(t *testing.T) {
 	}
 	defer detector.Stop(2 * time.Second)
 
-	recordCount := 10
-	for i := 0; i < recordCount; i++ {
-		record := &models.UeTrafficRecord{
-			UeIp:      "60.60.0.1",
-			Supi:      "imsi-001010000000001",
-			Timestamp: int64(1234567890 + i),
+	batchCount := 5
+	for i := 0; i < batchCount; i++ {
+		batch := []*models.UeTrafficRecord{
+			{
+				UeIp:      "60.60.0.1",
+				Supi:      "imsi-208930000000001",
+				Timestamp: int64(1234567890 + i),
+			},
+			{
+				UeIp:      "60.60.0.2",
+				Supi:      "imsi-208930000000002",
+				Timestamp: int64(1234567890 + i),
+			},
 		}
-		if err := detector.EnqueueRecord(record); err != nil {
-			t.Fatalf("EnqueueRecord failed for record %d: %v", i, err)
+		if err := detector.EnqueueBatch(batch); err != nil {
+			t.Fatalf("EnqueueBatch failed for batch %d: %v", i, err)
 		}
 	}
 
 	time.Sleep(500 * time.Millisecond)
 
 	exports := mockHandler.enqueueCount.Load()
-	if exports != int32(recordCount) {
-		t.Errorf("Expected %d exports, got %d", recordCount, exports)
+	expectedExports := int32(batchCount * 2) // 2 UEs per batch
+	if exports != expectedExports {
+		t.Errorf("Expected %d exports, got %d", expectedExports, exports)
 	}
 }
 
@@ -178,6 +201,41 @@ func newMockLLMServer(shouldFail bool, delay time.Duration) *httptest.Server {
 			return
 		}
 
+		// Handle batch predictions
+		if r.URL.Path == "/predict_batch" {
+			var req models.BatchInferenceRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			results := make([]*models.InferenceResult, len(req.Records))
+			for i, record := range req.Records {
+				results[i] = &models.InferenceResult{
+					UeIp:         record.UeIp,
+					Supi:         record.Supi,
+					Timestamp:    record.Timestamp,
+					IsAnomaly:    true,
+					AnomalyScore: 0.75,
+					Prediction:   "attack",
+					Confidence:   0.85,
+					ModelVersion: "test-v1.0",
+				}
+			}
+
+			resp := models.BatchInferenceResult{
+				Results:      results,
+				Timestamp:    req.Timestamp,
+				BatchSize:    len(results),
+				ModelVersion: "test-v1.0",
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		// Handle single prediction (legacy)
 		var req models.InferenceRequest
 		json.NewDecoder(r.Body).Decode(&req)
 

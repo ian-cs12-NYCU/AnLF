@@ -3,7 +3,6 @@ package detector
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/free5gc/anlf/internal/analyzer/queue"
@@ -17,7 +16,6 @@ type AnomalyDetector struct {
 	llmClient      *LLMClient
 	stopChan       chan struct{}
 	doneChan       chan struct{}
-	wg             sync.WaitGroup
 	enabled        bool
 }
 
@@ -59,30 +57,35 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 	return detector, nil
 }
 
-func (d *AnomalyDetector) Handle(record *models.UeTrafficRecord) error {
+// HandleBatch is called by InferenceQueue workers to process a batch of UE traffic records
+func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 	if !d.enabled {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	logger.AnalyzerLog.Debugf("[AnomalyDetector] Processing UE traffic: %s (SUPI: %s)", record.UeIp, record.Supi)
+	logger.AnalyzerLog.Infof("[AnomalyDetector] Processing batch of %d UE traffic records", len(records))
 
-	result, err := d.llmClient.Predict(ctx, record)
+	batchResult, err := d.llmClient.PredictBatch(ctx, records)
 	if err != nil {
-		logger.AnalyzerLog.Warnf("[AnomalyDetector] LLM prediction failed for UE %s: %v", record.UeIp, err)
-		return fmt.Errorf("LLM prediction failed: %w", err)
+		logger.AnalyzerLog.Warnf("[AnomalyDetector] LLM batch prediction failed: %v", err)
+		return fmt.Errorf("LLM batch prediction failed: %w", err)
 	}
 
-	msg := queue.NewInferenceResultMessage(result)
-	if err := d.exportQueue.EnqueueExport(msg); err != nil {
-		logger.AnalyzerLog.Errorf("[AnomalyDetector] Failed to enqueue inference result for %s: %v", record.UeIp, err)
-	} else {
-		logger.AnalyzerLog.Infof("[AnomalyDetector] Analysis complete - UE: %s | Prediction: %s | Score: %.2f | Confidence: %.2f",
-			record.UeIp, result.Prediction, result.AnomalyScore, result.Confidence)
+	// Enqueue individual results to ExportQueue
+	for _, result := range batchResult.Results {
+		msg := queue.NewInferenceResultMessage(result)
+		if err := d.exportQueue.EnqueueExport(msg); err != nil {
+			logger.AnalyzerLog.Errorf("[AnomalyDetector] Failed to enqueue inference result for %s: %v", result.UeIp, err)
+		} else {
+			logger.AnalyzerLog.Infof("[AnomalyDetector] Analysis complete - UE: %s | Prediction: %s | Score: %.2f | Confidence: %.2f",
+				result.UeIp, result.Prediction, result.AnomalyScore, result.Confidence)
+		}
 	}
 
+	logger.AnalyzerLog.Infof("[AnomalyDetector] Batch processing complete: %d UEs analyzed", len(batchResult.Results))
 	return nil
 }
 
@@ -140,11 +143,12 @@ func (d *AnomalyDetector) Name() string {
 	return "AnomalyDetector"
 }
 
-func (d *AnomalyDetector) EnqueueRecord(record *models.UeTrafficRecord) error {
+// EnqueueBatch adds a batch of UE traffic records to the inference queue
+func (d *AnomalyDetector) EnqueueBatch(records []*models.UeTrafficRecord) error {
 	if !d.enabled {
 		return nil
 	}
-	return d.inferenceQueue.EnqueueInference(record)
+	return d.inferenceQueue.EnqueueBatch(records)
 }
 
 func (d *AnomalyDetector) IsEnabled() bool {

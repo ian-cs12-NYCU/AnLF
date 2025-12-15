@@ -16,7 +16,7 @@ import (
 type TrafficMonitor struct {
 	ebpfMgr       *ebpf.Manager
 	smfClient     *consumer.MockSMF
-	featureChan   chan<- *models.UeTrafficRecord
+	featureChan   chan<- *models.BatchUeTrafficRecords
 	pollInterval  time.Duration
 	windowSeconds float64
 	stopChan      chan struct{}
@@ -27,7 +27,7 @@ type TrafficMonitor struct {
 func NewTrafficMonitor(
 	ebpfMgr *ebpf.Manager,
 	smfClient *consumer.MockSMF,
-	featureChan chan<- *models.UeTrafficRecord,
+	featureChan chan<- *models.BatchUeTrafficRecords,
 	pollInterval time.Duration,
 ) *TrafficMonitor {
 	return &TrafficMonitor{
@@ -109,7 +109,10 @@ func (m *TrafficMonitor) pollAndSend() {
 
 	logger.MonitorLog.Infof("Processing %d known UEs (eBPF metrics for %d UEs)", len(allUeIps), len(metrics))
 
-	// Send records for all UEs (either with metrics or zero-filled)
+	// Collect all UE records in a batch
+	records := make([]*models.UeTrafficRecord, 0, len(allUeIps))
+	timestamp := time.Now().Unix()
+
 	for _, ueIp := range allUeIps {
 		supi := m.smfClient.GetSupi(ueIp)
 
@@ -125,19 +128,28 @@ func (m *TrafficMonitor) pollAndSend() {
 			// UE has no traffic in this window - create zero-filled record
 			record = &models.UeTrafficRecord{
 				UeFeatureVector: models.UeFeatureVector{}, // All fields default to 0
-				Timestamp:       time.Now().Unix(),
+				Timestamp:       timestamp,
 				Supi:            supi,
 				UeIp:            ueIp,
 			}
 		}
 
-		// Non-blocking send
-		select {
-		case m.featureChan <- record:
-			logger.MonitorLog.Debugf("Sent traffic record for UE %s (SUPI: %s)", ueIp, supi)
-		default:
-			logger.MonitorLog.Warnf("Feature channel full, dropping record for %s", ueIp)
-		}
+		records = append(records, record)
+	}
+
+	// Send batch of all UE records
+	batch := &models.BatchUeTrafficRecords{
+		Records:   records,
+		Timestamp: timestamp,
+		BatchSize: len(records),
+	}
+
+	// Non-blocking send
+	select {
+	case m.featureChan <- batch:
+		logger.MonitorLog.Infof("Sent batch of %d UE traffic records", len(records))
+	default:
+		logger.MonitorLog.Warnf("Feature channel full, dropping batch of %d records", len(records))
 	}
 }
 

@@ -7,33 +7,33 @@ import (
 	"github.com/free5gc/anlf/pkg/models"
 )
 
-// InferenceQueue manages a queue for LLM inference requests
+// InferenceQueue manages a queue for LLM batch inference requests
 type InferenceQueue struct {
 	*BaseQueue
-	handler InferenceHandler
+	handler BatchInferenceHandler
 }
 
-// InferenceHandler processes inference requests from the queue
-type InferenceHandler interface {
-	Handle(record *models.UeTrafficRecord) error
+// BatchInferenceHandler processes batch inference requests from the queue
+type BatchInferenceHandler interface {
+	HandleBatch(records []*models.UeTrafficRecord) error
 }
 
-// inferenceHandlerAdapter adapts InferenceHandler to generic MessageHandler
-type inferenceHandlerAdapter struct {
-	handler InferenceHandler
+// batchInferenceHandlerAdapter adapts BatchInferenceHandler to generic MessageHandler
+type batchInferenceHandlerAdapter struct {
+	handler BatchInferenceHandler
 }
 
-func (a *inferenceHandlerAdapter) Handle(msg interface{}) error {
-	record, ok := msg.(*models.UeTrafficRecord)
+func (a *batchInferenceHandlerAdapter) Handle(msg interface{}) error {
+	batch, ok := msg.([]*models.UeTrafficRecord)
 	if !ok {
-		return nil // Skip non-traffic-record messages
+		return nil // Skip non-batch messages
 	}
-	return a.handler.Handle(record)
+	return a.handler.HandleBatch(batch)
 }
 
 // NewInferenceQueue creates a new inference queue with the given configuration
-func NewInferenceQueue(cfg QueueConfig, handler InferenceHandler) *InferenceQueue {
-	adapter := &inferenceHandlerAdapter{handler: handler}
+func NewInferenceQueue(cfg QueueConfig, handler BatchInferenceHandler) *InferenceQueue {
+	adapter := &batchInferenceHandlerAdapter{handler: handler}
 	baseQueue := NewBaseQueue("InferenceQueue", cfg, adapter)
 
 	return &InferenceQueue{
@@ -42,9 +42,9 @@ func NewInferenceQueue(cfg QueueConfig, handler InferenceHandler) *InferenceQueu
 	}
 }
 
-// EnqueueInference adds a traffic record to the inference queue
-func (q *InferenceQueue) EnqueueInference(record *models.UeTrafficRecord) error {
-	return q.BaseQueue.Enqueue(record)
+// EnqueueBatch adds a batch of traffic records to the inference queue
+func (q *InferenceQueue) EnqueueBatch(records []*models.UeTrafficRecord) error {
+	return q.BaseQueue.Enqueue(records)
 }
 
 // Start overrides BaseQueue.Start for inference-specific initialization

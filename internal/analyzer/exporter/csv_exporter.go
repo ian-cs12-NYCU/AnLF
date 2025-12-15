@@ -59,16 +59,52 @@ func NewCsvExporter(baseDir string) (*CsvExporter, error) {
 	return exporter, nil
 }
 
-// Export writes a UeTrafficRecord to CSV file
+// Export writes UeTrafficRecord(s) to CSV file
+// Supports both single record and BatchUeTrafficRecords
 func (e *CsvExporter) Export(data interface{}) error {
-	rec, ok := data.(*models.UeTrafficRecord)
-	if !ok {
-		return fmt.Errorf("invalid data type, expected *models.UeTrafficRecord")
-	}
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// Handle batch traffic records
+	if batch, ok := data.(*models.BatchUeTrafficRecords); ok {
+		return e.exportBatch(batch)
+	}
+
+	// Handle single traffic record (legacy)
+	if rec, ok := data.(*models.UeTrafficRecord); ok {
+		return e.exportRecord(rec)
+	}
+
+	return fmt.Errorf("invalid data type, expected *models.UeTrafficRecord or *models.BatchUeTrafficRecords")
+}
+
+// exportBatch writes a batch of UE traffic records, sorted by SUPI
+func (e *CsvExporter) exportBatch(batch *models.BatchUeTrafficRecords) error {
+	// Sort records by SUPI
+	sortedRecords := make([]*models.UeTrafficRecord, len(batch.Records))
+	copy(sortedRecords, batch.Records)
+
+	// Simple bubble sort by SUPI (sufficient for small batches like 20 UEs)
+	for i := 0; i < len(sortedRecords)-1; i++ {
+		for j := i + 1; j < len(sortedRecords); j++ {
+			if sortedRecords[i].Supi > sortedRecords[j].Supi {
+				sortedRecords[i], sortedRecords[j] = sortedRecords[j], sortedRecords[i]
+			}
+		}
+	}
+
+	// Write all sorted records
+	for _, rec := range sortedRecords {
+		if err := e.exportRecord(rec); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// exportRecord writes a single UE traffic record
+func (e *CsvExporter) exportRecord(rec *models.UeTrafficRecord) error {
 	row := []string{
 		strconv.FormatInt(rec.Timestamp, 10),
 		rec.Supi,
@@ -88,7 +124,7 @@ func (e *CsvExporter) Export(data interface{}) error {
 		return fmt.Errorf("failed to write CSV row: %w", err)
 	}
 
-	// Flush periodically (every write for safety, can be optimized later)
+	// Flush after each record/batch
 	e.writer.Flush()
 	return e.writer.Error()
 }
