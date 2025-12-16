@@ -115,12 +115,45 @@ static __always_inline int process_inner_ip(
             __u16 flags_word = *(__u16 *)((void *)tcph + 12);
             tcp_flags = (flags_word >> 8) & 0xFF;
             
+            // For TCP, only SYN packets indicate new connections
+            // This is efficient: we only do flow tracking on SYN packets
             if (tcp_flags & 0x02) {
-                is_new_flow = 1;
+                struct flow_key fkey = {};
+                fkey.src_ip = inner_src_ip;
+                fkey.dst_ip = inner_dst_ip;
+                fkey.proto = proto;
+                fkey.src_port = bpf_ntohs(tcph->source);
+                fkey.dst_port = bpf_ntohs(tcph->dest);
+                
+                __u8 *existing = bpf_map_lookup_elem(&flow_tracking_map, &fkey);
+                if (!existing) {
+                    is_new_flow = 1;
+                    __u8 marker = 1;
+                    bpf_map_update_elem(&flow_tracking_map, &fkey, &marker, BPF_ANY);
+                }
             }
         }
     } else if (proto == IPPROTO_UDP) {
-        is_new_flow = 1;
+        struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
+        if ((void *)udph + sizeof(*udph) <= data_end) {
+            // For UDP, always check flow tracking
+            // This is necessary to distinguish:
+            // - Normal: Few flows, many packets per flow -> low new_flow_rate
+            // - Attack: Many flows, few packets per flow -> high new_flow_rate
+            struct flow_key fkey = {};
+            fkey.src_ip = inner_src_ip;
+            fkey.dst_ip = inner_dst_ip;
+            fkey.proto = proto;
+            fkey.src_port = bpf_ntohs(udph->source);
+            fkey.dst_port = bpf_ntohs(udph->dest);
+            
+            __u8 *existing = bpf_map_lookup_elem(&flow_tracking_map, &fkey);
+            if (!existing) {
+                is_new_flow = 1;
+                __u8 marker = 1;
+                bpf_map_update_elem(&flow_tracking_map, &fkey, &marker, BPF_ANY);
+            }
+        }
     }
     
     update_ue_metrics(inner_src_ip, pkt_len, proto, tcp_flags, inner_dst_ip, is_new_flow);
