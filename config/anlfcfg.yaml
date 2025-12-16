@@ -24,7 +24,7 @@ configuration:
   
   monitoring:
     enable: true
-    pollInterval: 1
+    pollInterval: 3
     ueTablePath: /home/vagrant/AnLF/anlf/config/static_ue_list_20.json
   
   smf:
@@ -34,7 +34,7 @@ configuration:
   anomalyDetection:
     enable: true  # Set to true to enable LLM-based anomaly detection
     serverUrl: http://140.113.208.89:8000  # LLM server endpoint
-    timeout: 5  # Request timeout in seconds
+    timeout: 10  # Request timeout in seconds (10s to handle LLM warm-up and high concurrency)
     systemPromptPath: /home/vagrant/AnLF/anlf/prompts/anomaly_detection_single_ue.txt  # Path to system prompt file
     batchSize: 10  # Optimal batch size for LLM (5-10 UEs recommended for Qwen 2.5 1.5B)
     temperature: 0.1  # LLM temperature (0.0-2.0, lower = more deterministic)

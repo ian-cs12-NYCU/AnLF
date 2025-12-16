@@ -38,7 +38,7 @@ type LLMClientConfig struct {
 
 func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 5 * time.Second
+		cfg.Timeout = 10 * time.Second // Increased from 5s to tolerate LLM warm-up
 	}
 
 	if cfg.MaxConcurrent == 0 {
@@ -67,15 +67,17 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 
 	// Optimized HTTP Client with connection pooling for high concurrency
 	// Reference: high_speed_HTTPclient.md
+	// Key optimization: MaxIdleConnsPerHost=100 allows 97 UEs to use persistent connections
+	// Without this, Go's default is only 2, causing severe TCP handshake overhead
 	return &LLMClient{
 		serverURL: cfg.ServerURL,
 		httpClient: &http.Client{
 			Timeout: cfg.Timeout,
 			Transport: &http.Transport{
-				MaxIdleConns:        1000,              // Allow large number of idle connections
-				MaxIdleConnsPerHost: cfg.MaxConcurrent, // Critical: Must >= concurrent target
-				IdleConnTimeout:     90 * time.Second,
-				DisableKeepAlives:   false, // Ensure Keep-Alive is enabled
+				MaxIdleConns:        200,              // Total idle connections across all hosts
+				MaxIdleConnsPerHost: 100,              // Critical: Allow 100 persistent connections to LLM server
+				IdleConnTimeout:     90 * time.Second, // Keep connections alive for 90s
+				DisableKeepAlives:   false,            // Must be false to enable connection reuse
 			},
 		},
 		timeout:       cfg.Timeout,
@@ -114,7 +116,7 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 	defer func() {
 		elapsed := time.Since(startTime)
 		if elapsed > c.timeout/2 {
-			logger.AnalyzerLog.Debugf("[LLMClient] ⚠️  %s: Slow request detected (%.2fs / %.2fs timeout)", 
+			logger.AnalyzerLog.Debugf("[LLMClient] ⚠️  %s: Slow request detected (%.2fs / %.2fs timeout)",
 				record.Supi, elapsed.Seconds(), c.timeout.Seconds())
 		}
 	}()
