@@ -228,3 +228,67 @@ func TestLLMClient_HealthCheck_Failure(t *testing.T) {
 		t.Error("Expected error on health check failure, got nil")
 	}
 }
+
+func TestLLMClient_Predict_CountMismatch(t *testing.T) {
+	// Mock server that returns fewer results than sent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		// Always return only 1 result regardless of input count
+		result := &models.InferenceResult{
+			Supi:         "imsi-208930000000001",
+			AnomalyScore: 0.5,
+		}
+
+		responseContent := map[string]interface{}{
+			"results": []*models.InferenceResult{result},
+		}
+		contentBytes, _ := json.Marshal(responseContent)
+
+		openAIResp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{
+						"content": string(contentBytes),
+					},
+				},
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(openAIResp)
+	}))
+	defer server.Close()
+
+	client := NewLLMClient(LLMClientConfig{
+		ServerURL: server.URL,
+		Timeout:   5 * time.Second,
+	})
+
+	// Send 3 UEs but server will only return 1
+	records := []*models.UeTrafficRecord{
+		{Supi: "imsi-208930000000001"},
+		{Supi: "imsi-208930000000002"},
+		{Supi: "imsi-208930000000003"},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, err := client.PredictBatch(ctx, records)
+
+	// Should succeed but log warning
+	if err != nil {
+		t.Fatalf("PredictBatch failed: %v", err)
+	}
+
+	if result == nil || len(result.Results) != 1 {
+		t.Errorf("Expected 1 result, got %d", len(result.Results))
+	}
+
+	// The warning should be logged (check manually or with log capture)
+	t.Log("Warning about count mismatch should appear in logs: sent 3 UEs, parsed 1")
+}

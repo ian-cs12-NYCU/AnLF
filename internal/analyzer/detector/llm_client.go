@@ -60,6 +60,9 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTrafficRecord) (*models.BatchInferenceResult, error) {
 	logger.AnalyzerLog.Infof("[LLMClient] Attempting batch prediction for %d UEs", len(records))
 
+	// Start latency measurement
+	startTime := time.Now()
+
 	// Build a structured prompt for the LLM
 	var userPrompt strings.Builder
 	userPrompt.WriteString("Analyze these network traffic records and classify each as 'normal' or 'attack'.\n")
@@ -124,7 +127,7 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	logger.AnalyzerLog.Infof("[LLMClient] → Trying OpenAI API: POST %s/v1/chat/completions", c.serverURL)
+	logger.AnalyzerLog.Debugf("[LLMClient] → Trying OpenAI API: POST %s/v1/chat/completions", c.serverURL)
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		logger.AnalyzerLog.Warnf("[LLMClient] ✗ OpenAI API connection failed: %v", err)
@@ -168,7 +171,7 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 
 	// Parse the content as our BatchInferenceResult
 	content := openAIResp.Choices[0].Message.Content
-	logger.AnalyzerLog.Infof("[LLMClient] Raw LLM content (length=%d chars): %s", len(content), content)
+	logger.AnalyzerLog.Debugf("[LLMClient] Raw LLM content (length=%d chars): %s", len(content), content)
 
 	// Clean potential markdown formatting and extract JSON
 	content = strings.TrimSpace(content)
@@ -191,7 +194,7 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 		content = content[:idx+1]
 	}
 
-	logger.AnalyzerLog.Infof("[LLMClient] Cleaned JSON content (length=%d chars): %s", len(content), content)
+	logger.AnalyzerLog.Debugf("[LLMClient] Cleaned JSON content (length=%d chars): %s", len(content), content)
 
 	var result models.BatchInferenceResult
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
@@ -214,7 +217,14 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 		return c.createDefaultBatchResult(records), nil
 	}
 
-	logger.AnalyzerLog.Infof("[LLMClient] ✓ Successfully parsed %d UE results from LLM", len(result.Results))
+	// Check if parsed UE count matches input count
+	if len(result.Results) != len(records) {
+		logger.AnalyzerLog.Warnf("[LLMClient] ⚠ UE count mismatch: sent %d UEs, but parsed %d results from LLM", len(records), len(result.Results))
+	}
+
+	// Calculate latency
+	latency := time.Since(startTime)
+	logger.AnalyzerLog.Infof("[LLMClient] ✓ Successfully parsed %d UE results (output size: %d bytes, latency: %v)", len(result.Results), len(content), latency)
 	return &result, nil
 }
 

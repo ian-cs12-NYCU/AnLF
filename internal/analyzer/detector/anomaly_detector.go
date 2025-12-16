@@ -153,12 +153,12 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 		if err := d.exportQueue.EnqueueExport(msg); err != nil {
 			logger.AnalyzerLog.Errorf("[AnomalyDetector] Failed to enqueue inference result for %s: %v", result.Supi, err)
 		} else {
-			logger.AnalyzerLog.Infof("[AnomalyDetector] Analysis complete - SUPI: %s | Anomaly Score: %.3f",
+			logger.AnalyzerLog.Debugf("[AnomalyDetector] Analysis complete - SUPI: %s | Anomaly Score: %.3f",
 				result.Supi, result.AnomalyScore)
 		}
 	}
 
-	logger.AnalyzerLog.Infof("[AnomalyDetector] Batch processing complete: %d UEs analyzed in %d parallel sub-batches (sorted by SUPI)", len(allResults), len(subBatches))
+	logger.AnalyzerLog.Debugf("[AnomalyDetector] Batch processing complete: %d UEs analyzed in %d parallel sub-batches (sorted by SUPI)", len(allResults), len(subBatches))
 	return nil
 }
 

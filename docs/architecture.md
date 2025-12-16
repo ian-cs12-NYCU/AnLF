@@ -21,8 +21,8 @@ graph TB
         subgraph "Inference Pipeline"
             InfQueue[InferenceQueue<br/>推論佇列<br/>LLM 推論請求]
             Detector[AnomalyDetector<br/>異常偵測器]
-            LLMClient[LLM Client<br/>HTTP 客戶端]
-            LLMServer["LLM Server<br/>外部推論服務<br/>:5000"]
+            LLMClient[LLM Client<br/>HTTP 客戶端<br/>- OpenAI-compatible<br/>- json_schema + One-Shot prompt<br/>- measures latency<br/>- WARN on UE count mismatch]
+            LLMServer["LLM Server<br/>外部推論服務<br/>POST /v1/chat/completions (OpenAI-compatible)"]
         end
         
         subgraph "Export Pipeline"
@@ -57,8 +57,8 @@ graph TB
     Analyzer -->|Batch UeTrafficRecord| InfQueue
     
     InfQueue -->|Worker| Detector
-    Detector -->|Batch Split<br/>5 UEs per sub-batch| LLMClient
-    LLMClient -->|Parallel Goroutines<br/>POST /predict_batch| LLMServer
+    Detector -->|Batch Split<br/>Configurable sub-batch default: 10 UEs| LLMClient
+    LLMClient -->|Parallel Goroutines<br/>POST /v1/chat/completions OpenAI-compatible, json_schema enforced| LLMServer
     LLMServer -->|BatchInferenceResult<br/>per sub-batch| LLMClient
     Detector -->|InferenceResult<br/>per UE sorted by SUPI| ExpQueue
     
@@ -142,7 +142,7 @@ sequenceDiagram
         loop Inference Worker
             IQ->>D: Dequeue Batch
             D->>LC: PredictBatch(ctx, records)
-            LC->>LS: POST /predict_batch JSON<br/>All UEs in single request
+            LC->>LS: POST /v1/chat/completions (OpenAI-compatible)<br/>json_schema + One-Shot prompt
             LS-->>LC: BatchInferenceResult
             Note over D: 遍歷批次結果
             loop For Each Result
@@ -293,7 +293,7 @@ graph TB
         IW1 -->|detector.HandleBatch| Detector["AnomalyDetector<br/>---<br/>LLM 批次推論"]
         IW2 -->|detector.HandleBatch| Detector
         
-        Detector -->|LLMClient.PredictBatch| LLMServer["LLM Server<br/>:5001<br/>POST /predict_batch<br/>All UEs in 1 request"]
+        Detector -->|LLMClient.PredictBatch| LLMServer["LLM Server<br/>:5001<br/>POST /v1/chat/completions<br/>OpenAI-compatible, json_schema enforced, sub-batches via goroutines"]
         
         Detector -->|Per-UE InferenceResult| ExpQueue
     end
@@ -637,12 +637,12 @@ configuration:
 - **Monitoring**: 每 30 秒報告佇列利用率，超過 80% 發出警告
 
 ### Inference Queue (LLM Pipeline)
-- **Batch Inference**: 單一 HTTP 請求包含所有 UE 數據，大幅降低網路開銷
-  - 原架構: N 個 UE × 每秒 → N 個 HTTP 請求/秒
-  - 批次架構: N 個 UE × 每秒 → 1 個 HTTP 請求/秒 (包含 N 個 UE)
-- **Dynamic Batch Size**: 批次大小依實際 UE 數量動態調整，不固定於 20
-- **POST /predict_batch**: LLM Server 批次端點，接收 BatchInferenceRequest
-- **Result Distribution**: 批次推論結果拆分為個別 UE 結果，逐一寫入 ExportQueue
+- **Batch Inference**: 使用 OpenAI-compatible Chat Completions API 批次推論，並可視情況拆分為多個子批次以避免模型輸出截斷或格式錯誤
+    - 原架構: N 個 UE × 每秒 → N 個 HTTP 請求/秒
+    - 批次架構: N 個 UE × 每秒 → 少量 HTTP 請求/秒（採 sub-batches）
+- **Dynamic Batch Size**: 批次大小依實際 UE 數量動態調整，配置參數 `batchSize`（建議 5-10）
+- **Endpoint**: 使用 `POST /v1/chat/completions`（OpenAI-compatible），請求中採用 `json_schema` 與 One-Shot system prompt 以強制穩定 JSON 輸出；`max_tokens` 增加以避免截斷
+- **Result Distribution**: 批次推論結果（每個子批次）回傳後拆分為個別 UE 結果，逐一寫入 ExportQueue
 
 ### 資料完整性
 - **Zero-filling**: 沒有流量的 UE 也會產生零值記錄
@@ -686,8 +686,8 @@ configuration:
    - 10000 容量 buffered channel
    - 2 個並行 worker (可配置)
    - LLMClient HTTP 客戶端
-   - 向外部 LLM Server POST /predict_batch (批次推論)
-   - 單一請求包含所有 UE 數據，減少 HTTP 開銷
+    - 向外部 LLM Server POST /v1/chat/completions (OpenAI-compatible, json_schema enforced)
+    - 請求可包含多個 UE（或拆分為子批次），以平衡 token 數與模型穩定性
    - 結果逐一寫回 ExportQueue
 
 6. **配置系統**
@@ -760,24 +760,24 @@ anomalyDetection:
 
 **啟用異常檢測的步驟:**
 1. 修改 config/anlfcfg.yaml:
-   ```yaml
-   anomalyDetection:
-     enable: true
-     serverUrl: "http://127.0.0.1:5000"
-     timeout: 5
-     batchSize: 5
-   ```
+     ```yaml
+     anomalyDetection:
+         enable: true
+         serverUrl: "http://127.0.0.1:5000"   # OpenAI-compatible LLM server base URL
+         timeout: 5
+         batchSize: 10                         # 子批次大小（建議 5-10）
+     ```
 
 2. 啟動 LLM 推論伺服器:
-   ```bash
-   # 服務必須在指定地址監聽
-   # 實作 POST /predict_batch 端點 (批次推論)
-   # 實作 GET /health 端點
+    ```bash
+    # 服務必須在指定地址監聽
+    # 實作 POST /v1/chat/completions 端點 (OpenAI-compatible Chat Completions)
+    # 實作 GET /health 端點
    
-   # 範例：啟動 mock LLM server
-   cd test_LLM_server
-   python3 llm_server.py 5001
-   ```
+    # 範例：啟動 mock LLM server
+    cd test_LLM_server
+    python3 llm_server.py 5001
+    ```
 
 3. 啟動 AnLF:
    ```bash
@@ -808,8 +808,8 @@ anomalyDetection:
     └─→ [InferenceQueue] (if enabled, []*UeTrafficRecord)
             ├─ 2 Workers → [AnomalyDetector.HandleBatch]
             │   ├─→ [LLMClient.PredictBatch]
-            │   │       └─→ POST http://127.0.0.1:5001/predict_batch
-            │   │           (單一請求包含所有 UE)
+            │   │       └─→ POST http://127.0.0.1:5001/v1/chat/completions
+            │   │           (OpenAI-compatible; supports json_schema, One-Shot; sub-batches possible)
             │   │           ↓
             │   │       [LLM Server]
             │   │           ↓
