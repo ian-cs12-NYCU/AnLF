@@ -93,21 +93,31 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 
 	logger.AnalyzerLog.Infof("[Poll #%d] Received batch of %d traffic records", batch.PollID, batch.BatchSize)
 
-	// Calculate global network statistics (avg across all UEs in this batch)
+	// Calculate global network statistics (avg across active UEs only)
 	if batch.BatchSize > 0 {
 		var sumLogPPS, sumFlowRate, sumAvgLen float64
+		activeCount := 0
 		for _, record := range batch.Records {
+			// Skip empty records (inactive UEs)
+			if record.UeFeatureVector.LogPPS == 0.0 &&
+				record.UeFeatureVector.AvgLen == 0.0 &&
+				record.UeFeatureVector.NewFlowRate == 0.0 {
+				continue
+			}
 			sumLogPPS += record.UeFeatureVector.LogPPS
 			sumFlowRate += record.UeFeatureVector.NewFlowRate
 			sumAvgLen += record.UeFeatureVector.AvgLen
+			activeCount++
 		}
-		batch.GlobalStats = &models.GlobalNetworkStats{
-			AvgLogPPS:   sumLogPPS / float64(batch.BatchSize),
-			AvgFlowRate: sumFlowRate / float64(batch.BatchSize),
-			AvgLen:      sumAvgLen / float64(batch.BatchSize),
+		if activeCount > 0 {
+			batch.GlobalStats = &models.GlobalNetworkStats{
+				AvgLogPPS:   sumLogPPS / float64(activeCount),
+				AvgFlowRate: sumFlowRate / float64(activeCount),
+				AvgLen:      sumAvgLen / float64(activeCount),
+			}
+			logger.AnalyzerLog.Debugf("[Poll #%d] Global Stats (from %d active UEs): Avg PPS=%.2f, Avg Flow=%.2f, Avg Len=%.0f",
+				batch.PollID, activeCount, batch.GlobalStats.AvgLogPPS, batch.GlobalStats.AvgFlowRate, batch.GlobalStats.AvgLen)
 		}
-		logger.AnalyzerLog.Debugf("[Poll #%d] Global Stats: Avg PPS=%.2f, Avg Flow=%.2f, Avg Len=%.0f",
-			batch.PollID, batch.GlobalStats.AvgLogPPS, batch.GlobalStats.AvgFlowRate, batch.GlobalStats.AvgLen)
 	}
 
 	// Assign poll ID to each record (for logging in anomaly detector)
