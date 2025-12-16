@@ -15,7 +15,7 @@ type InferenceQueue struct {
 
 // BatchInferenceHandler processes batch inference requests from the queue
 type BatchInferenceHandler interface {
-	HandleBatch(records []*models.UeTrafficRecord) error
+	HandleBatch(batch *models.BatchUeTrafficRecords) error
 }
 
 // batchInferenceHandlerAdapter adapts BatchInferenceHandler to generic MessageHandler
@@ -24,7 +24,7 @@ type batchInferenceHandlerAdapter struct {
 }
 
 func (a *batchInferenceHandlerAdapter) Handle(msg interface{}) error {
-	batch, ok := msg.([]*models.UeTrafficRecord)
+	batch, ok := msg.(*models.BatchUeTrafficRecords)
 	if !ok {
 		return nil // Skip non-batch messages
 	}
@@ -43,8 +43,8 @@ func NewInferenceQueue(cfg QueueConfig, handler BatchInferenceHandler) *Inferenc
 }
 
 // EnqueueBatch adds a batch of traffic records to the inference queue
-func (q *InferenceQueue) EnqueueBatch(records []*models.UeTrafficRecord) error {
-	return q.BaseQueue.Enqueue(records)
+func (q *InferenceQueue) EnqueueBatch(batch *models.BatchUeTrafficRecords) error {
+	return q.BaseQueue.Enqueue(batch)
 }
 
 // Start overrides BaseQueue.Start for inference-specific initialization

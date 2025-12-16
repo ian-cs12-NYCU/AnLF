@@ -39,6 +39,7 @@ configuration:
     batchSize: 10  # Optimal batch size for LLM (5-10 UEs recommended for Qwen 2.5 1.5B)
     temperature: 0.1  # LLM temperature (0.0-2.0, lower = more deterministic)
     maxTokens: 50  # Max response tokens (sufficient for "Risk Score: X.X")
+    includeGlobalContext: true  # Include global network statistics in prompt (avg PPS, Flow, Packet Size)
 
 logger:
   enable: true

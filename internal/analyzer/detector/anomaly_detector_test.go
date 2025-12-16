@@ -38,15 +38,18 @@ func TestAnomalyDetector_Disabled(t *testing.T) {
 		t.Fatalf("Failed to create detector: %v", err)
 	}
 
-	batch := []*models.UeTrafficRecord{
-		{
-			UeIp: "60.60.0.1",
-			Supi: "imsi-208930000000001",
+	batch := &models.BatchUeTrafficRecords{
+		Records: []*models.UeTrafficRecord{
+			{
+				UeIp: "60.60.0.1",
+				Supi: "imsi-208930000000001",
+			},
+			{
+				UeIp: "60.60.0.2",
+				Supi: "imsi-208930000000002",
+			},
 		},
-		{
-			UeIp: "60.60.0.2",
-			Supi: "imsi-208930000000002",
-		},
+		BatchSize: 2,
 	}
 
 	err = detector.EnqueueBatch(batch)
@@ -98,17 +101,20 @@ func TestAnomalyDetector_Success(t *testing.T) {
 	}
 	defer detector.Stop(2 * time.Second)
 
-	batch := []*models.UeTrafficRecord{
-		{
-			UeIp:      "60.60.0.1",
-			Supi:      "imsi-208930000000001",
-			Timestamp: 1234567890,
+	batch := &models.BatchUeTrafficRecords{
+		Records: []*models.UeTrafficRecord{
+			{
+				UeIp:      "60.60.0.1",
+				Supi:      "imsi-208930000000001",
+				Timestamp: 1234567890,
+			},
+			{
+				UeIp:      "60.60.0.2",
+				Supi:      "imsi-208930000000002",
+				Timestamp: 1234567890,
+			},
 		},
-		{
-			UeIp:      "60.60.0.2",
-			Supi:      "imsi-208930000000002",
-			Timestamp: 1234567890,
-		},
+		BatchSize: 2,
 	}
 
 	err = detector.EnqueueBatch(batch)
@@ -164,17 +170,20 @@ func TestAnomalyDetector_MultipleRecords(t *testing.T) {
 
 	batchCount := 5
 	for i := 0; i < batchCount; i++ {
-		batch := []*models.UeTrafficRecord{
-			{
-				UeIp:      "60.60.0.1",
-				Supi:      "imsi-208930000000001",
-				Timestamp: int64(1234567890 + i),
+		batch := &models.BatchUeTrafficRecords{
+			Records: []*models.UeTrafficRecord{
+				{
+					UeIp:      "60.60.0.1",
+					Supi:      "imsi-208930000000001",
+					Timestamp: int64(1234567890 + i),
+				},
+				{
+					UeIp:      "60.60.0.2",
+					Supi:      "imsi-208930000000002",
+					Timestamp: int64(1234567890 + i),
+				},
 			},
-			{
-				UeIp:      "60.60.0.2",
-				Supi:      "imsi-208930000000002",
-				Timestamp: int64(1234567890 + i),
-			},
+			BatchSize: 2,
 		}
 		if err := detector.EnqueueBatch(batch); err != nil {
 			t.Fatalf("EnqueueBatch failed for batch %d: %v", i, err)

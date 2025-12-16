@@ -68,13 +68,14 @@ type Smf struct {
 }
 
 type AnomalyDetection struct {
-	Enable           bool    `yaml:"enable" valid:"type(bool)"`
-	ServerURL        string  `yaml:"serverUrl" valid:"url,optional"`
-	Timeout          int     `yaml:"timeout" valid:"type(int),optional"`             // in seconds
-	SystemPromptPath string  `yaml:"systemPromptPath" valid:"type(string),optional"` // path to system prompt file
-	BatchSize        int     `yaml:"batchSize" valid:"type(int),optional"`           // optimal batch size for LLM (5-10 UEs recommended)
-	Temperature      float64 `yaml:"temperature" valid:"type(float64),optional"`     // LLM temperature (0.0-2.0, default: 0.1)
-	MaxTokens        int     `yaml:"maxTokens" valid:"type(int),optional"`           // Max response tokens (default: 50)
+	Enable               bool    `yaml:"enable" valid:"type(bool)"`
+	ServerURL            string  `yaml:"serverUrl" valid:"url,optional"`
+	Timeout              int     `yaml:"timeout" valid:"type(int),optional"`               // in seconds
+	SystemPromptPath     string  `yaml:"systemPromptPath" valid:"type(string),optional"`   // path to system prompt file
+	BatchSize            int     `yaml:"batchSize" valid:"type(int),optional"`             // optimal batch size for LLM (5-10 UEs recommended)
+	Temperature          float64 `yaml:"temperature" valid:"type(float64),optional"`       // LLM temperature (0.0-2.0, default: 0.1)
+	MaxTokens            int     `yaml:"maxTokens" valid:"type(int),optional"`             // Max response tokens (default: 50)
+	IncludeGlobalContext bool    `yaml:"includeGlobalContext" valid:"type(bool),optional"` // Include global network statistics in prompt
 }
 
 type Logger struct {
@@ -416,4 +417,10 @@ func (c *Config) GetSmfPollInterval() int {
 		return c.Configuration.Smf.PollInterval
 	}
 	return 5 // default 5 seconds
+}
+
+func (c *Config) GetAnomalyDetectionIncludeGlobalContext() bool {
+	c.RLock()
+	defer c.RUnlock()
+	return c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.IncludeGlobalContext
 }

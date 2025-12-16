@@ -46,9 +46,9 @@ func TestLLMClient_PredictSingleUE_Success(t *testing.T) {
 			return
 		}
 
-		// Verify key-value format: "Input: ID:xxx, PPS:x.x, ..."
-		if !strings.Contains(content, "Input: ID:") {
-			t.Errorf("Expected key-value format, got: %s", content)
+		// Verify template-based format: "User Data: ID:xxx, PPS:x.x, ..."
+		if !strings.Contains(content, "User Data: ID:") {
+			t.Errorf("Expected template-based format with 'User Data:', got: %s", content)
 		}
 
 		// Return risk score in expected format
@@ -87,7 +87,7 @@ func TestLLMClient_PredictSingleUE_Success(t *testing.T) {
 		},
 	}
 
-	result, err := client.PredictSingleUE(context.Background(), record)
+	result, err := client.PredictSingleUE(context.Background(), record, nil)
 	if err != nil {
 		t.Fatalf("PredictSingleUE failed: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestLLMClient_PredictSingleUESingleUE_ServerError(t *testing.T) {
 		},
 	}
 
-	_, err := client.PredictSingleUE(context.Background(), record)
+	_, err := client.PredictSingleUE(context.Background(), record, nil)
 	if err == nil {
 		t.Error("Expected error on server failure, got nil")
 	}
@@ -154,7 +154,7 @@ func TestLLMClient_PredictSingleUESingleUE_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	_, err := client.PredictSingleUE(ctx, record)
+	_, err := client.PredictSingleUE(ctx, record, nil)
 	if err == nil {
 		t.Error("Expected timeout error, got nil")
 	}

@@ -11,14 +11,16 @@ import (
 
 type MockInferenceHandler struct {
 	handleCount  atomic.Int32
-	lastBatch    []*models.UeTrafficRecord
+	lastBatch    *models.BatchUeTrafficRecords
 	totalRecords atomic.Int32
 }
 
-func (m *MockInferenceHandler) HandleBatch(records []*models.UeTrafficRecord) error {
+func (m *MockInferenceHandler) HandleBatch(batch *models.BatchUeTrafficRecords) error {
 	m.handleCount.Add(1)
-	m.lastBatch = records
-	m.totalRecords.Add(int32(len(records)))
+	m.lastBatch = batch
+	if batch != nil {
+		m.totalRecords.Add(int32(len(batch.Records)))
+	}
 	return nil
 }
 
@@ -37,21 +39,24 @@ func TestInferenceQueue_Basic(t *testing.T) {
 		t.Fatalf("Failed to start queue: %v", err)
 	}
 
-	batch := []*models.UeTrafficRecord{
-		{
-			UeFeatureVector: models.UeFeatureVector{
-				LogPPS: 3.5,
+	batch := &models.BatchUeTrafficRecords{
+		Records: []*models.UeTrafficRecord{
+			{
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS: 3.5,
+				},
+				UeIp: "60.60.0.1",
+				Supi: "imsi-001010000000001",
 			},
-			UeIp: "60.60.0.1",
-			Supi: "imsi-001010000000001",
-		},
-		{
-			UeFeatureVector: models.UeFeatureVector{
-				LogPPS: 4.2,
+			{
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS: 4.2,
+				},
+				UeIp: "60.60.0.2",
+				Supi: "imsi-001010000000002",
 			},
-			UeIp: "60.60.0.2",
-			Supi: "imsi-001010000000002",
 		},
+		BatchSize: 2,
 	}
 
 	if err := queue.EnqueueBatch(batch); err != nil {
@@ -68,12 +73,16 @@ func TestInferenceQueue_Basic(t *testing.T) {
 		t.Fatal("Expected lastBatch to be set")
 	}
 
-	if len(handler.lastBatch) != 2 {
-		t.Errorf("Expected batch size 2, got %d", len(handler.lastBatch))
+	if handler.lastBatch.BatchSize != 2 {
+		t.Errorf("Expected batch size 2, got %d", handler.lastBatch.BatchSize)
 	}
 
-	if handler.lastBatch[0].UeIp != batch[0].UeIp {
-		t.Errorf("Expected UE IP %s, got %s", batch[0].UeIp, handler.lastBatch[0].UeIp)
+	if len(handler.lastBatch.Records) != 2 {
+		t.Errorf("Expected 2 records, got %d", len(handler.lastBatch.Records))
+	}
+
+	if handler.lastBatch.Records[0].UeIp != batch.Records[0].UeIp {
+		t.Errorf("Expected UE IP %s, got %s", batch.Records[0].UeIp, handler.lastBatch.Records[0].UeIp)
 	}
 
 	if err := queue.Stop(2 * time.Second); err != nil {
@@ -98,28 +107,31 @@ func TestInferenceQueue_MultipleRecords(t *testing.T) {
 
 	batchCount := 10
 	for i := 0; i < batchCount; i++ {
-		batch := []*models.UeTrafficRecord{
-			{
-				UeFeatureVector: models.UeFeatureVector{
-					LogPPS: float64(i * 5),
+		batch := &models.BatchUeTrafficRecords{
+			Records: []*models.UeTrafficRecord{
+				{
+					UeFeatureVector: models.UeFeatureVector{
+						LogPPS: float64(i * 5),
+					},
+					UeIp: "60.60.0.1",
+					Supi: "imsi-001010000000001",
 				},
-				UeIp: "60.60.0.1",
-				Supi: "imsi-001010000000001",
-			},
-			{
-				UeFeatureVector: models.UeFeatureVector{
-					LogPPS: float64(i*5 + 1),
+				{
+					UeFeatureVector: models.UeFeatureVector{
+						LogPPS: float64(i*5 + 1),
+					},
+					UeIp: "60.60.0.2",
+					Supi: "imsi-001010000000002",
 				},
-				UeIp: "60.60.0.2",
-				Supi: "imsi-001010000000002",
-			},
-			{
-				UeFeatureVector: models.UeFeatureVector{
-					LogPPS: float64(i*5 + 2),
+				{
+					UeFeatureVector: models.UeFeatureVector{
+						LogPPS: float64(i*5 + 2),
+					},
+					UeIp: "60.60.0.3",
+					Supi: "imsi-001010000000003",
 				},
-				UeIp: "60.60.0.3",
-				Supi: "imsi-001010000000003",
 			},
+			BatchSize: 3,
 		}
 		if err := queue.EnqueueBatch(batch); err != nil {
 			t.Fatalf("Failed to enqueue batch %d: %v", i, err)

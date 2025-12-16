@@ -547,6 +547,32 @@ type InferenceResult struct {
 }
 ```
 
+### Global Network Statistics ✨ **新增 (2025-12-16)**
+```go
+// 全域網路統計 (每個 Poll 週期計算一次)
+type GlobalNetworkStats struct {
+    AvgLogPPS   float64 `json:"avg_log_pps"`   // 平均 Log10(PPS)
+    AvgFlowRate float64 `json:"avg_flow_rate"` // 平均新連線率
+    AvgLen      float64 `json:"avg_len"`       // 平均封包大小
+}
+
+// BatchUeTrafficRecords 包含全域統計
+type BatchUeTrafficRecords struct {
+    Records     []*UeTrafficRecord   `json:"records"`
+    Timestamp   int64                `json:"timestamp"`
+    BatchSize   int                  `json:"batch_size"`
+    PollID      uint64               `json:"poll_id"`
+    GlobalStats *GlobalNetworkStats  `json:"global_stats"` // ✨ 新增
+}
+```
+
+**全域統計功能說明:**
+- FlowAnalyzer 在 `processBatch()` 階段計算所有 UE 的平均值
+- 每個 poll 週期的所有 UE 共用相同的全域統計資料
+- 可透過 `includeGlobalContext: true` 配置啟用
+- 用於 LLM prompt 中提供網路整體狀態資訊
+- 幫助 LLM 識別異常 UE（與平均值偏離過大）
+
 ### Export Message Structure
 ```go
 type ExportMessage struct {
@@ -554,7 +580,7 @@ type ExportMessage struct {
     Data interface{}  // 實際資料內容
 }
 
-// 範例：批次流量記錄訊息
+// 範例：批次流量記錄訊息 (含全域統計)
 {
     Type: "batch_traffic_records",
     Data: &BatchUeTrafficRecords{
@@ -565,6 +591,11 @@ type ExportMessage struct {
         },
         Timestamp: 1702649400,
         BatchSize: 20,
+        GlobalStats: &GlobalNetworkStats{  // ✨ 新增
+            AvgLogPPS:   3.2,
+            AvgFlowRate: 0.3,
+            AvgLen:      650.0,
+        },
     }
 }
 
@@ -744,6 +775,7 @@ anomalyDetection:
   timeout: 5                                             # 請求超時 (秒)
   maxConcurrent: 100                                     # 最大並發請求數 (預設: 100)
   systemPromptPath: ./prompts/anomaly_detection_single_ue.txt  # 單UE提示詞模板
+  includeGlobalContext: true                             # 包含全域網路統計 (預設: false)
 ```
 
 **效能優化特性** ✨ **最新版本 (2025-12-16) - Single-UE Concurrent Architecture**
@@ -759,10 +791,14 @@ anomalyDetection:
    - Keep-Alive 啟用，重用TCP連接
    - 參考: high_speed_HTTPclient.md
 
-3. **Key-Value Prompt格式**
-   - 精簡的輸入格式: `ID:xxx, PPS:x.x, Len:xxx, ...`
-   - 大幅減少 input tokens，提升速度
-   - 移除Global Network Context (暫不實作)
+3. **Template-Based Prompt格式** ✨ **新增全域統計支援 (2025-12-16)**
+   - 使用佔位符 (Placeholder) 模板格式: `{supi}`, `{log_pps}`, `{global_avg_pps}` 等
+   - 支援全域網路統計 (Global Network Context):
+     - `{global_avg_pps}`: 所有UE的平均Log10(PPS)
+     - `{global_avg_flow}`: 所有UE的平均新連線率
+     - `{global_avg_len}`: 所有UE的平均封包大小
+   - 可通過 `includeGlobalContext` 配置啟用/停用全域統計
+   - 動態填入每次poll的全域資料，同批次UE共用相同全域統計
    - 每個請求僅需 ~10 output tokens
 
 4. **Fail-Open 機制**
@@ -788,6 +824,7 @@ anomalyDetection:
          timeout: 5
          maxConcurrent: 100                    # 最大並發請求數 (根據服務器性能調整)
          systemPromptPath: ./prompts/anomaly_detection_single_ue.txt
+         includeGlobalContext: true            # 啟用全域網路統計 (可選)
      ```
 
 2. 啟動 LLM 推論伺服器:
@@ -809,9 +846,58 @@ anomalyDetection:
 
 4. 使用 prompt_preview 工具測試:
    ```bash
-   # 預覽單UE模式的prompt
-   ./bin/prompt_preview -prompt ./prompts/anomaly_detection_single_ue.txt -ues 5 -single
+   # 預覽帶全域統計的 prompt
+   ./bin/prompt_preview -prompt ./prompts/anomaly_detection_single_ue.txt -global=true
+   
+   # 預覽不帶全域統計的 prompt
+   ./bin/prompt_preview -prompt ./prompts/anomaly_detection_single_ue.txt -global=false
+   
+   # 只顯示 system prompt
+   ./bin/prompt_preview -prompt ./prompts/anomaly_detection_single_ue.txt -system-only
+   
+   # 只顯示 user prompt
+   ./bin/prompt_preview -prompt ./prompts/anomaly_detection_single_ue.txt -user-only
    ```
+
+### Prompt 模板格式 ✨ **Template-Based (2025-12-16)**
+
+AnLF 現在使用佔位符 (Placeholder) 模板格式，支援動態替換：
+
+**System Prompt 模板 (`prompts/anomaly_detection_single_ue.txt`):**
+```
+You are a Network Security Analyst for a 5G Core Network.
+Your task is to detect DoS attacks by analyzing single UE traffic patterns.
+
+Global Network Context (Current Window):
+- Global Avg PPS: {global_avg_pps}
+- Global Avg Flow Rate: {global_avg_flow}
+- Global Avg Packet Size: {global_avg_len}
+
+Input Field Definitions:
+...
+
+User Data: ID:{supi}, PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}
+```
+
+**支援的佔位符:**
+- **全域統計:** `{global_avg_pps}`, `{global_avg_flow}`, `{global_avg_len}`
+- **UE 特定:** `{supi}`, `{log_pps}`, `{avg_len}`, `{flow_rate}`, `{fan_out}`, `{tcp_ratio}`, `{syn_ratio}`, `{rst_ratio}`
+
+**運行時替換示例:**
+```
+Global Network Context (Current Window):
+- Global Avg PPS: 3.20
+- Global Avg Flow Rate: 0.30
+- Global Avg Packet Size: 650
+
+User Data: ID:imsi-2089300000000001, PPS:5.0, Len:512, Flow:0.90, Fan:5, TCP:0.6, SYN:0.1, RST:0.0
+```
+
+**特性:**
+- 模板與資料分離，易於修改 prompt
+- 支援條件式啟用全域統計（`includeGlobalContext` 配置）
+- 最後一行 "User Data:" 作為 user prompt，其餘為 system prompt
+- 佔位符格式統一使用 `{key}` 格式
 
 ### 資料流完整版本
 

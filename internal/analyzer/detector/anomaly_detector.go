@@ -12,23 +12,25 @@ import (
 )
 
 type AnomalyDetector struct {
-	inferenceQueue *queue.InferenceQueue
-	exportQueue    *queue.ExportQueue
-	llmClient      *LLMClient
-	llmTimeout     time.Duration // Store timeout for diagnostics
-	stopChan       chan struct{}
-	doneChan       chan struct{}
-	enabled        bool
+	inferenceQueue       *queue.InferenceQueue
+	exportQueue          *queue.ExportQueue
+	llmClient            *LLMClient
+	llmTimeout           time.Duration // Store timeout for diagnostics
+	includeGlobalContext bool          // Whether to include global network stats in prompts
+	stopChan             chan struct{}
+	doneChan             chan struct{}
+	enabled              bool
 }
 
 type AnomalyDetectorConfig struct {
-	LLMServerURL     string
-	LLMTimeout       time.Duration
-	SystemPromptPath string  // Path to system prompt file
-	Temperature      float64 // LLM temperature
-	MaxTokens        int     // Max response tokens
-	QueueConfig      queue.QueueConfig
-	Enabled          bool
+	LLMServerURL         string
+	LLMTimeout           time.Duration
+	SystemPromptPath     string  // Path to system prompt file
+	Temperature          float64 // LLM temperature
+	MaxTokens            int     // Max response tokens
+	IncludeGlobalContext bool    // Include global network statistics in prompt
+	QueueConfig          queue.QueueConfig
+	Enabled              bool
 }
 
 func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueue) (*AnomalyDetector, error) {
@@ -50,12 +52,13 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 	})
 
 	detector := &AnomalyDetector{
-		llmClient:   llmClient,
-		llmTimeout:  cfg.LLMTimeout,
-		exportQueue: exportQueue,
-		stopChan:    make(chan struct{}),
-		doneChan:    make(chan struct{}),
-		enabled:     true,
+		llmClient:            llmClient,
+		llmTimeout:           cfg.LLMTimeout,
+		includeGlobalContext: cfg.IncludeGlobalContext,
+		exportQueue:          exportQueue,
+		stopChan:             make(chan struct{}),
+		doneChan:             make(chan struct{}),
+		enabled:              true,
 	}
 
 	detector.inferenceQueue = queue.NewInferenceQueue(cfg.QueueConfig, detector)
@@ -67,20 +70,17 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 // HandleBatch processes a batch of UE traffic records using single-UE concurrent requests
 // Each UE sends one individual request to the LLM server with optimized connection pooling
 // Reference: high_speed_HTTPclient.md for performance optimization
-func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
+func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error {
 	if !d.enabled {
 		return nil
 	}
 
-	if len(records) == 0 {
+	if batch == nil || len(batch.Records) == 0 {
 		return nil
 	}
 
-	// Get pollID from first record (all records in batch have same pollID)
-	pollID := uint64(0)
-	if len(records) > 0 && records[0] != nil {
-		pollID = records[0].PollID
-	}
+	records := batch.Records
+	pollID := batch.PollID
 
 	startTime := time.Now()
 	logPrefix := fmt.Sprintf("[Poll #%d]", pollID)
@@ -111,8 +111,12 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 			ctx, cancel := context.WithTimeout(context.Background(), d.llmTimeout)
 			defer cancel()
 
-			// Send single UE request
-			result, err := d.llmClient.PredictSingleUE(ctx, ue)
+			// Send single UE request with global network statistics (if enabled)
+			var globalStats *models.GlobalNetworkStats
+			if d.includeGlobalContext {
+				globalStats = batch.GlobalStats
+			}
+			result, err := d.llmClient.PredictSingleUE(ctx, ue, globalStats)
 			if err != nil {
 				// Enhanced error logging with categorization
 				if ctx.Err() == context.DeadlineExceeded {
@@ -258,11 +262,11 @@ func (d *AnomalyDetector) Name() string {
 }
 
 // EnqueueBatch adds a batch of UE traffic records to the inference queue
-func (d *AnomalyDetector) EnqueueBatch(records []*models.UeTrafficRecord) error {
+func (d *AnomalyDetector) EnqueueBatch(batch *models.BatchUeTrafficRecords) error {
 	if !d.enabled {
 		return nil
 	}
-	return d.inferenceQueue.EnqueueBatch(records)
+	return d.inferenceQueue.EnqueueBatch(batch)
 }
 
 func (d *AnomalyDetector) IsEnabled() bool {

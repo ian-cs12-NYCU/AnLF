@@ -89,28 +89,129 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 	}
 }
 
-// BuildSingleUEPrompt builds prompt for a single UE (key-value format)
-func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord) (systemContent string, userContent string) {
+// BuildSingleUEPrompt builds prompt for a single UE with template variable replacement
+// Supports placeholders: {global_avg_pps}, {global_avg_flow}, {global_avg_len},
+// {supi}, {log_pps}, {avg_len}, {flow_rate}, {fan_out}, {tcp_ratio}, {syn_ratio}, {rst_ratio}
+func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalStats *models.GlobalNetworkStats) (systemContent string, userContent string) {
 	systemContent = c.systemPrompt
 
-	// Key-value format to save input tokens
-	userContent = fmt.Sprintf("Input: ID:%s, PPS:%.1f, Len:%d, Flow:%.2f, Fan:%d, TCP:%.1f, SYN:%.1f, RST:%.1f",
-		record.Supi,
-		record.UeFeatureVector.LogPPS,
-		int(record.UeFeatureVector.AvgLen),
-		record.UeFeatureVector.NewFlowRate,
-		int(record.UeFeatureVector.FanOut),
-		record.UeFeatureVector.TcpRatio,
-		record.UeFeatureVector.SynRatio,
-		record.UeFeatureVector.RstRatio,
-	)
+	// Replace global statistics placeholders in system prompt (if globalStats provided)
+	if globalStats != nil {
+		systemContent = replacePlaceholder(systemContent, "global_avg_pps", fmt.Sprintf("%.2f", globalStats.AvgLogPPS))
+		systemContent = replacePlaceholder(systemContent, "global_avg_flow", fmt.Sprintf("%.2f", globalStats.AvgFlowRate))
+		systemContent = replacePlaceholder(systemContent, "global_avg_len", fmt.Sprintf("%.0f", globalStats.AvgLen))
+	} else {
+		// If no global stats, replace with "N/A"
+		systemContent = replacePlaceholder(systemContent, "global_avg_pps", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_avg_flow", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_avg_len", "N/A")
+	}
+
+	// Build user content by replacing UE-specific placeholders
+	// Start with the last line of system prompt which contains the user data template
+	userContent = systemContent
+
+	// Extract user data template (last line that starts with "User Data:")
+	lines := splitLines(systemContent)
+	userDataTemplate := ""
+	systemLines := []string{}
+
+	for _, line := range lines {
+		if len(line) >= 10 && line[:10] == "User Data:" {
+			userDataTemplate = line
+		} else {
+			systemLines = append(systemLines, line)
+		}
+	}
+
+	// Update system content to exclude user data template
+	systemContent = joinLines(systemLines)
+
+	// If template found, use it; otherwise fall back to default format
+	if userDataTemplate != "" {
+		userContent = userDataTemplate
+	} else {
+		// Fallback: simple key-value format
+		userContent = "User Data: ID:{supi}, PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}"
+	}
+
+	// Replace UE-specific placeholders
+	userContent = replacePlaceholder(userContent, "supi", record.Supi)
+	userContent = replacePlaceholder(userContent, "log_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.LogPPS))
+	userContent = replacePlaceholder(userContent, "avg_len", fmt.Sprintf("%d", int(record.UeFeatureVector.AvgLen)))
+	userContent = replacePlaceholder(userContent, "flow_rate", fmt.Sprintf("%.2f", record.UeFeatureVector.NewFlowRate))
+	userContent = replacePlaceholder(userContent, "fan_out", fmt.Sprintf("%d", int(record.UeFeatureVector.FanOut)))
+	userContent = replacePlaceholder(userContent, "tcp_ratio", fmt.Sprintf("%.1f", record.UeFeatureVector.TcpRatio))
+	userContent = replacePlaceholder(userContent, "syn_ratio", fmt.Sprintf("%.1f", record.UeFeatureVector.SynRatio))
+	userContent = replacePlaceholder(userContent, "rst_ratio", fmt.Sprintf("%.1f", record.UeFeatureVector.RstRatio))
 
 	return systemContent, userContent
 }
 
+// replacePlaceholder replaces {key} with value in the text
+func replacePlaceholder(text, key, value string) string {
+	placeholder := "{" + key + "}"
+	return replaceAll(text, placeholder, value)
+}
+
+// replaceAll is a simple string replacement helper
+func replaceAll(s, old, new string) string {
+	result := ""
+	for {
+		idx := indexOf(s, old)
+		if idx == -1 {
+			result += s
+			break
+		}
+		result += s[:idx] + new
+		s = s[idx+len(old):]
+	}
+	return result
+}
+
+// indexOf finds the first occurrence of substr in s
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+// splitLines splits text into lines
+func splitLines(text string) []string {
+	lines := []string{}
+	current := ""
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\n' {
+			lines = append(lines, current)
+			current = ""
+		} else {
+			current += string(text[i])
+		}
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
+// joinLines joins lines with newline
+func joinLines(lines []string) string {
+	result := ""
+	for i, line := range lines {
+		result += line
+		if i < len(lines)-1 {
+			result += "\n"
+		}
+	}
+	return result
+}
+
 // PredictSingleUE sends a single UE traffic record to LLM server for anomaly detection
-// Uses OpenAI-compatible API with optimized key-value prompt format
-func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTrafficRecord) (*models.InferenceResult, error) {
+// Uses OpenAI-compatible API with template-based prompt format
+func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTrafficRecord, globalStats *models.GlobalNetworkStats) (*models.InferenceResult, error) {
 	// Track request timing for diagnostics
 	startTime := time.Now()
 	defer func() {
@@ -121,8 +222,8 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 		}
 	}()
 
-	// Build key-value format prompt
-	systemContent, userContent := c.BuildSingleUEPrompt(record)
+	// Build prompt with template replacement (includes global stats if provided)
+	systemContent, userContent := c.BuildSingleUEPrompt(record, globalStats)
 
 	// OpenAI Chat Completions API format (simple request for single UE)
 	openAIReq := map[string]interface{}{

@@ -14,13 +14,15 @@ func main() {
 	systemPromptPath := flag.String("prompt", "./prompts/anomaly_detection_single_ue.txt", "Path to system prompt file")
 	showUserOnly := flag.Bool("user-only", false, "Show only user prompt (without system prompt)")
 	showSystemOnly := flag.Bool("system-only", false, "Show only system prompt")
+	includeGlobal := flag.Bool("global", true, "Include global network statistics in prompt")
 	flag.Parse()
 
 	fmt.Println("====================================================================")
 	fmt.Println("              AnLF Prompt Preview Tool")
 	fmt.Println("====================================================================")
 	fmt.Printf("System Prompt Path: %s\n", *systemPromptPath)
-	fmt.Printf("Mode: Single-UE Format (Key-Value Optimized)\n")
+	fmt.Printf("Mode: Template-Based Format (Placeholder Replacement)\n")
+	fmt.Printf("Global Context: %v\n", *includeGlobal)
 	fmt.Println("====================================================================")
 	fmt.Println()
 
@@ -30,11 +32,15 @@ func main() {
 		ServerURL:        "http://dummy-url", // Not used for preview
 	})
 
-	// Generate a single sample UE
+	// Generate sample UE and global statistics
 	record := generateSampleRecord()
+	var globalStats *models.GlobalNetworkStats
+	if *includeGlobal {
+		globalStats = generateSampleGlobalStats()
+	}
 
-	// Build single UE prompt
-	systemContent, userContent := client.BuildSingleUEPrompt(record)
+	// Build single UE prompt with template replacement
+	systemContent, userContent := client.BuildSingleUEPrompt(record, globalStats)
 
 	// Display the results based on flags
 	if *showSystemOnly {
@@ -55,7 +61,7 @@ func main() {
 		fmt.Println("\033[41;97m [PROMPT END] \033[0m")
 		fmt.Println()
 		printSection("STATISTICS", fmt.Sprintf(
-			"System Prompt Length: %d chars\nUser Prompt Length: %d chars\nTotal Length: %d chars\nFormat: Key-Value (token-optimized)",
+			"System Prompt Length: %d chars\nUser Prompt Length: %d chars\nTotal Length: %d chars\nFormat: Template-Based (placeholder replacement)",
 			len(systemContent), len(userContent), len(systemContent)+len(userContent),
 		))
 	}
@@ -78,6 +84,15 @@ func generateSampleRecord() *models.UeTrafficRecord {
 			NewFlowRate: 0.9, // High flow rate
 			FanOut:      5.0,
 		},
+	}
+}
+
+func generateSampleGlobalStats() *models.GlobalNetworkStats {
+	// Generate sample global network statistics
+	return &models.GlobalNetworkStats{
+		AvgLogPPS:   3.2,   // Average log10(PPS) across all UEs
+		AvgFlowRate: 0.3,   // Average new flow rate
+		AvgLen:      650.0, // Average packet size
 	}
 }
 

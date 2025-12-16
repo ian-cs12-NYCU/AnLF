@@ -20,7 +20,7 @@ type FlowAnalyzer struct {
 }
 
 type AnomalyDetector interface {
-	EnqueueBatch(records []*models.UeTrafficRecord) error
+	EnqueueBatch(batch *models.BatchUeTrafficRecords) error
 	IsEnabled() bool
 }
 
@@ -93,6 +93,23 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 
 	logger.AnalyzerLog.Infof("[Poll #%d] Received batch of %d traffic records", batch.PollID, batch.BatchSize)
 
+	// Calculate global network statistics (avg across all UEs in this batch)
+	if batch.BatchSize > 0 {
+		var sumLogPPS, sumFlowRate, sumAvgLen float64
+		for _, record := range batch.Records {
+			sumLogPPS += record.UeFeatureVector.LogPPS
+			sumFlowRate += record.UeFeatureVector.NewFlowRate
+			sumAvgLen += record.UeFeatureVector.AvgLen
+		}
+		batch.GlobalStats = &models.GlobalNetworkStats{
+			AvgLogPPS:   sumLogPPS / float64(batch.BatchSize),
+			AvgFlowRate: sumFlowRate / float64(batch.BatchSize),
+			AvgLen:      sumAvgLen / float64(batch.BatchSize),
+		}
+		logger.AnalyzerLog.Debugf("[Poll #%d] Global Stats: Avg PPS=%.2f, Avg Flow=%.2f, Avg Len=%.0f",
+			batch.PollID, batch.GlobalStats.AvgLogPPS, batch.GlobalStats.AvgFlowRate, batch.GlobalStats.AvgLen)
+	}
+
 	// Assign poll ID to each record (for logging in anomaly detector)
 	for _, record := range batch.Records {
 		record.PollID = batch.PollID
@@ -109,7 +126,7 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 
 	// Send entire batch to anomaly detector's inference queue for batch LLM inference
 	if a.anomalyDetector != nil && a.anomalyDetector.IsEnabled() {
-		if err := a.anomalyDetector.EnqueueBatch(batch.Records); err != nil {
+		if err := a.anomalyDetector.EnqueueBatch(batch); err != nil {
 			logger.AnalyzerLog.Errorf("[Poll #%d] Failed to enqueue batch for anomaly detection: %v", batch.PollID, err)
 		} else {
 			logger.AnalyzerLog.Debugf("[Poll #%d] Enqueued batch of %d records for anomaly detection", batch.PollID, batch.BatchSize)

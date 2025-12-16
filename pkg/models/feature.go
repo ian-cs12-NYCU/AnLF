@@ -24,10 +24,18 @@ type UeTrafficRecord struct {
 	PollID    uint64 `json:"-" csv:"-"` // Poll sequence number (for logging only, not exported)
 }
 
+// GlobalNetworkStats represents aggregated statistics across all UEs in a batch
+type GlobalNetworkStats struct {
+	AvgLogPPS   float64 `json:"avg_log_pps"`
+	AvgFlowRate float64 `json:"avg_flow_rate"`
+	AvgLen      float64 `json:"avg_len"`
+}
+
 // BatchUeTrafficRecords represents a batch of UE traffic records collected in one monitoring cycle
 type BatchUeTrafficRecords struct {
-	Records   []*UeTrafficRecord `json:"records"`
-	Timestamp int64              `json:"timestamp"`
-	BatchSize int                `json:"batch_size"`
-	PollID    uint64             `json:"poll_id"` // Sequential poll number for tracking
+	Records     []*UeTrafficRecord  `json:"records"`
+	Timestamp   int64               `json:"timestamp"`
+	BatchSize   int                 `json:"batch_size"`
+	PollID      uint64              `json:"poll_id"`      // Sequential poll number for tracking
+	GlobalStats *GlobalNetworkStats `json:"global_stats"` // Global network statistics for this batch
 }
