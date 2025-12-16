@@ -18,16 +18,16 @@ type AnomalyDetector struct {
 	stopChan       chan struct{}
 	doneChan       chan struct{}
 	enabled        bool
-	batchSize      int // Optimal batch size for LLM server (5-10 UEs recommended)
 }
 
 type AnomalyDetectorConfig struct {
 	LLMServerURL     string
 	LLMTimeout       time.Duration
-	SystemPromptPath string // Path to system prompt file
+	SystemPromptPath string  // Path to system prompt file
+	Temperature      float64 // LLM temperature
+	MaxTokens        int     // Max response tokens
 	QueueConfig      queue.QueueConfig
 	Enabled          bool
-	BatchSize        int // Optimal batch size for LLM server (default: 5)
 }
 
 func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueue) (*AnomalyDetector, error) {
@@ -44,13 +44,9 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 		ServerURL:        cfg.LLMServerURL,
 		Timeout:          cfg.LLMTimeout,
 		SystemPromptPath: cfg.SystemPromptPath,
+		Temperature:      cfg.Temperature,
+		MaxTokens:        cfg.MaxTokens,
 	})
-
-	// Set default batch size for optimal LLM performance (Qwen 2.5 1.5B recommendation: 5-10 UEs)
-	batchSize := cfg.BatchSize
-	if batchSize <= 0 {
-		batchSize = 5 // Default to 5 UEs per batch for stability
-	}
 
 	detector := &AnomalyDetector{
 		llmClient:   llmClient,
@@ -58,7 +54,6 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 		stopChan:    make(chan struct{}),
 		doneChan:    make(chan struct{}),
 		enabled:     true,
-		batchSize:   batchSize,
 	}
 
 	detector.inferenceQueue = queue.NewInferenceQueue(cfg.QueueConfig, detector)
@@ -67,8 +62,9 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 	return detector, nil
 }
 
-// HandleBatch is called by InferenceQueue workers to process a batch of UE traffic records
-// It splits large batches into smaller sub-batches and processes them in parallel using goroutines
+// HandleBatch processes a batch of UE traffic records using single-UE concurrent requests
+// Each UE sends one individual request to the LLM server with optimized connection pooling
+// Reference: high_speed_HTTPclient.md for performance optimization
 func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 	if !d.enabled {
 		return nil
@@ -78,70 +74,62 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 		return nil
 	}
 
-	logger.AnalyzerLog.Infof("[AnomalyDetector] Processing batch of %d UE traffic records (batch_size=%d)", len(records), d.batchSize)
+	startTime := time.Now()
+	logger.AnalyzerLog.Infof("[AnomalyDetector] Processing batch of %d UEs (single-UE concurrent mode)", len(records))
 
-	// Split into optimal sub-batches for LLM processing (recommended: 5-10 UEs per batch)
-	var subBatches [][]*models.UeTrafficRecord
-	for i := 0; i < len(records); i += d.batchSize {
-		end := i + d.batchSize
-		if end > len(records) {
-			end = len(records)
-		}
-		subBatches = append(subBatches, records[i:end])
-	}
+	// Semaphore for concurrency control (limit in-flight requests)
+	// Reference: high_speed_HTTPclient.md - prevents server congestion
+	maxConcurrent := d.llmClient.maxConcurrent
+	sem := make(chan struct{}, maxConcurrent)
 
-	logger.AnalyzerLog.Infof("[AnomalyDetector] Split into %d sub-batches for parallel processing", len(subBatches))
-
-	// Process sub-batches in parallel using goroutines
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	allResults := make([]*models.InferenceResult, 0, len(records))
-	errChan := make(chan error, len(subBatches))
+	errorCount := 0
 
-	for batchIdx, subBatch := range subBatches {
+	// Process each UE in parallel with concurrency control
+	for _, record := range records {
 		wg.Add(1)
-		go func(idx int, batch []*models.UeTrafficRecord) {
+
+		// Acquire semaphore slot (blocks if at capacity)
+		sem <- struct{}{}
+
+		go func(ue *models.UeTrafficRecord) {
 			defer wg.Done()
+			defer func() { <-sem }() // Release semaphore slot
 
 			// Each goroutine gets its own context with timeout
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			logger.AnalyzerLog.Debugf("[AnomalyDetector] Sub-batch %d: Processing %d UEs", idx+1, len(batch))
-
-			// Call LLM server for this sub-batch
-			batchResult, err := d.llmClient.PredictBatch(ctx, batch)
+			// Send single UE request
+			result, err := d.llmClient.PredictSingleUE(ctx, ue)
 			if err != nil {
-				logger.AnalyzerLog.Warnf("[AnomalyDetector] Sub-batch %d: LLM prediction failed: %v (fail-open: assuming Normal)", idx+1, err)
-				// Fail-Open: Create default "Normal" results for this sub-batch
-				defaultResults := d.createDefaultResults(batch)
+				logger.AnalyzerLog.Warnf("[AnomalyDetector] %s: LLM prediction failed: %v (fail-open: assuming Normal)", ue.Supi, err)
+				// Fail-Open: Create default "Normal" result
+				result = &models.InferenceResult{
+					Supi:         ue.Supi,
+					AnomalyScore: 0.1,
+				}
 				mu.Lock()
-				allResults = append(allResults, defaultResults...)
+				errorCount++
 				mu.Unlock()
-				errChan <- fmt.Errorf("sub-batch %d failed: %w", idx+1, err)
-				return
 			}
 
-			logger.AnalyzerLog.Debugf("[AnomalyDetector] Sub-batch %d: Received %d results from LLM", idx+1, len(batchResult.Results))
-
-			// Collect results thread-safely
+			// Collect result thread-safely
 			mu.Lock()
-			allResults = append(allResults, batchResult.Results...)
+			allResults = append(allResults, result)
 			mu.Unlock()
-		}(batchIdx, subBatch)
+		}(record)
 	}
 
 	// Wait for all goroutines to complete
 	wg.Wait()
-	close(errChan)
 
-	// Check for errors (non-fatal, already handled with fail-open)
-	var errs []error
-	for err := range errChan {
-		errs = append(errs, err)
-	}
-	if len(errs) > 0 {
-		logger.AnalyzerLog.Warnf("[AnomalyDetector] %d/%d sub-batches encountered errors (fail-open applied)", len(errs), len(subBatches))
+	if errorCount > 0 {
+		logger.AnalyzerLog.Warnf("[AnomalyDetector] %d/%d UEs encountered errors (fail-open applied)", errorCount, len(records))
+	} else {
+		logger.AnalyzerLog.Infof("[AnomalyDetector] ✓ Successfully processed %d UEs (all parsed successfully)", len(records))
 	}
 
 	// Sort results by SUPI to maintain consistent order
@@ -158,7 +146,10 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 		}
 	}
 
-	logger.AnalyzerLog.Debugf("[AnomalyDetector] Batch processing complete: %d UEs analyzed in %d parallel sub-batches (sorted by SUPI)", len(allResults), len(subBatches))
+	duration := time.Since(startTime)
+	throughput := float64(len(allResults)) / duration.Seconds()
+	logger.AnalyzerLog.Infof("[AnomalyDetector] Batch complete: %d UEs analyzed in %v (%.2f req/s)",
+		len(allResults), duration, throughput)
 	return nil
 }
 

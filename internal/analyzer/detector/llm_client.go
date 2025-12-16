@@ -8,7 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/free5gc/anlf/internal/logger"
@@ -16,21 +17,40 @@ import (
 )
 
 type LLMClient struct {
-	serverURL    string
-	httpClient   *http.Client
-	timeout      time.Duration
-	systemPrompt string // Cached system prompt content
+	serverURL     string
+	httpClient    *http.Client
+	timeout       time.Duration
+	systemPrompt  string // Cached system prompt content
+	scoreRegex    *regexp.Regexp
+	maxConcurrent int     // Max concurrent requests (for semaphore)
+	temperature   float64 // LLM temperature parameter
+	maxTokens     int     // Max response tokens
 }
 
 type LLMClientConfig struct {
 	ServerURL        string
 	Timeout          time.Duration
-	SystemPromptPath string // Path to system prompt file
+	SystemPromptPath string  // Path to system prompt file
+	MaxConcurrent    int     // Max concurrent requests (default: 100)
+	Temperature      float64 // LLM temperature (default: 0.1)
+	MaxTokens        int     // Max response tokens (default: 50)
 }
 
 func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 5 * time.Second
+	}
+
+	if cfg.MaxConcurrent == 0 {
+		cfg.MaxConcurrent = 100
+	}
+
+	if cfg.Temperature == 0 {
+		cfg.Temperature = 0.1 // Default: low randomness for consistent detection
+	}
+
+	if cfg.MaxTokens == 0 {
+		cfg.MaxTokens = 50 // Default: sufficient for "Risk Score: X.X"
 	}
 
 	// Load system prompt from file if path is provided
@@ -45,125 +65,90 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 		}
 	}
 
+	// Optimized HTTP Client with connection pooling for high concurrency
+	// Reference: high_speed_HTTPclient.md
 	return &LLMClient{
 		serverURL: cfg.ServerURL,
 		httpClient: &http.Client{
 			Timeout: cfg.Timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        1000,              // Allow large number of idle connections
+				MaxIdleConnsPerHost: cfg.MaxConcurrent, // Critical: Must >= concurrent target
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false, // Ensure Keep-Alive is enabled
+			},
 		},
-		timeout:      cfg.Timeout,
-		systemPrompt: systemPrompt,
+		timeout:       cfg.Timeout,
+		systemPrompt:  systemPrompt,
+		scoreRegex:    regexp.MustCompile(`Risk Score:\s*(0\.\d+|1\.0|0|1)`),
+		maxConcurrent: cfg.MaxConcurrent,
+		temperature:   cfg.Temperature,
+		maxTokens:     cfg.MaxTokens,
 	}
 }
 
-// BuildPrompt constructs the final LLM request with system prompt + user content
-// This function is exposed for testing and debugging purposes (e.g., prompt_preview tool)
-func (c *LLMClient) BuildPrompt(records []*models.UeTrafficRecord) (systemContent string, userContent string, err error) {
-	// System prompt (loaded from file)
+// BuildSingleUEPrompt builds prompt for a single UE (key-value format)
+func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord) (systemContent string, userContent string) {
 	systemContent = c.systemPrompt
 
-	// Build user prompt with UE traffic data
-	var userPrompt strings.Builder
-	userPrompt.WriteString("Analyze these network traffic records and classify each as 'normal' or 'attack'.\n")
-	userPrompt.WriteString("Return a JSON object with 'results' array containing one result per UE.\n\n")
+	// Key-value format to save input tokens
+	userContent = fmt.Sprintf("Input: ID:%s, PPS:%.1f, Len:%d, Flow:%.2f, Fan:%d, TCP:%.1f, SYN:%.1f, RST:%.1f",
+		record.Supi,
+		record.UeFeatureVector.LogPPS,
+		int(record.UeFeatureVector.AvgLen),
+		record.UeFeatureVector.NewFlowRate,
+		int(record.UeFeatureVector.FanOut),
+		record.UeFeatureVector.TcpRatio,
+		record.UeFeatureVector.SynRatio,
+		record.UeFeatureVector.RstRatio,
+	)
 
-	recordsJSON, err := json.MarshalIndent(records, "", "  ")
-	if err != nil {
-		return "", "", fmt.Errorf("failed to marshal records: %w", err)
-	}
-	userPrompt.Write(recordsJSON)
-
-	userContent = userPrompt.String()
-	return systemContent, userContent, nil
+	return systemContent, userContent
 }
 
-// PredictBatch sends a batch of UE traffic records to LLM server for anomaly detection
-// Uses OpenAI-compatible API (/v1/chat/completions)
-func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTrafficRecord) (*models.BatchInferenceResult, error) {
-	logger.AnalyzerLog.Infof("[LLMClient] Attempting batch prediction for %d UEs", len(records))
+// PredictSingleUE sends a single UE traffic record to LLM server for anomaly detection
+// Uses OpenAI-compatible API with optimized key-value prompt format
+func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTrafficRecord) (*models.InferenceResult, error) {
+	// Build key-value format prompt
+	systemContent, userContent := c.BuildSingleUEPrompt(record)
 
-	// Start latency measurement
-	startTime := time.Now()
-
-	// Build prompt using the new function
-	systemContent, userContent, err := c.BuildPrompt(records)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build prompt: %w", err)
-	}
-
-	// OpenAI Chat Completions API format with json_schema
+	// OpenAI Chat Completions API format (simple request for single UE)
 	openAIReq := map[string]interface{}{
-		"model": "default",
+		"model": "qwen",
 		"messages": []map[string]string{
-			{
-				"role":    "system",
-				"content": systemContent,
-			},
-			{
-				"role":    "user",
-				"content": userContent,
-			},
+			{"role": "system", "content": systemContent},
+			{"role": "user", "content": userContent},
 		},
-		"temperature": 0.1,
-		"max_tokens":  1000,
-		"response_format": map[string]interface{}{
-			"type": "json_object",
-			"schema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"results": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"supi": map[string]string{
-									"type": "string",
-								},
-								"anomaly_score": map[string]string{
-									"type": "number",
-								},
-							},
-							"required": []string{"supi", "anomaly_score"},
-						},
-					},
-				},
-				"required": []string{"results"},
-			},
-		},
+		"temperature": c.temperature, // Configurable temperature
+		"max_tokens":  c.maxTokens,   // Configurable max tokens
 	}
 
 	jsonData, err := json.Marshal(openAIReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal OpenAI request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.serverURL+"/v1/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OpenAI request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	logger.AnalyzerLog.Debugf("[LLMClient] → Trying OpenAI API: POST %s/v1/chat/completions", c.serverURL)
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		logger.AnalyzerLog.Warnf("[LLMClient] ✗ OpenAI API connection failed: %v", err)
-		return nil, fmt.Errorf("failed to send OpenAI request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.AnalyzerLog.Warnf("[LLMClient] ✗ Failed to read response body: %v", err)
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		logger.AnalyzerLog.Warnf("[LLMClient] ✗ OpenAI API returned status %d: %s", resp.StatusCode, string(respBody))
-		return nil, fmt.Errorf("OpenAI API returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
-
-	logger.AnalyzerLog.Debugf("[LLMClient] Raw OpenAI response (first 1000 chars): %s", string(respBody[:min(len(respBody), 1000)]))
 
 	// Parse OpenAI response
 	var openAIResp struct {
@@ -175,87 +160,45 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 	}
 
 	if err := json.Unmarshal(respBody, &openAIResp); err != nil {
-		logger.AnalyzerLog.Warnf("[LLMClient] ✗ Failed to decode OpenAI JSON response: %v", err)
-		logger.AnalyzerLog.Warnf("[LLMClient] Response body was: %s", string(respBody))
-		return nil, fmt.Errorf("failed to decode OpenAI response: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if len(openAIResp.Choices) == 0 {
-		logger.AnalyzerLog.Warnf("[LLMClient] ✗ OpenAI response has no choices")
-		return nil, fmt.Errorf("no choices in OpenAI response")
+		return nil, fmt.Errorf("empty response from LLM")
 	}
 
-	// Parse the content as our BatchInferenceResult
-	content := openAIResp.Choices[0].Message.Content
-	logger.AnalyzerLog.Debugf("[LLMClient] Raw LLM content (length=%d chars): %s", len(content), content)
+	rawContent := openAIResp.Choices[0].Message.Content
+	logger.AnalyzerLog.Debugf("[LLMClient] %s: Raw LLM response: %s", record.Supi, rawContent)
 
-	// Clean potential markdown formatting and extract JSON
-	content = strings.TrimSpace(content)
-
-	// Remove markdown code blocks (```json ... ``` or ``` ... ```)
-	if strings.Contains(content, "```") {
-		// Remove opening ```json or ```
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimPrefix(content, "```")
-		// Remove closing ```
-		content = strings.TrimSuffix(content, "```")
-		content = strings.TrimSpace(content)
-	}
-
-	// Try to extract JSON object if wrapped in text
-	if idx := strings.Index(content, "{"); idx >= 0 {
-		content = content[idx:]
-	}
-	if idx := strings.LastIndex(content, "}"); idx >= 0 {
-		content = content[:idx+1]
-	}
-
-	logger.AnalyzerLog.Debugf("[LLMClient] Cleaned JSON content (length=%d chars): %s", len(content), content)
-
-	var result models.BatchInferenceResult
-	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		logger.AnalyzerLog.Warnf("[LLMClient] ✗ Failed to parse LLM response as BatchInferenceResult: %v", err)
-		logger.AnalyzerLog.Warnf("[LLMClient] Content length: %d bytes", len(content))
-		if len(content) > 0 {
-			logger.AnalyzerLog.Warnf("[LLMClient] Content preview (first 500 chars): %s", content[:min(len(content), 500)])
-		} else {
-			logger.AnalyzerLog.Warnf("[LLMClient] Content is EMPTY!")
-		}
-
-		// If parsing fails, create default results for fail-open
-		logger.AnalyzerLog.Warnf("[LLMClient] Using fail-open: returning default 'normal' results for %d UEs", len(records))
-		return c.createDefaultBatchResult(records), nil
-	}
-
-	// Validate results
-	if len(result.Results) == 0 {
-		logger.AnalyzerLog.Warnf("[LLMClient] LLM returned empty results array")
-		return c.createDefaultBatchResult(records), nil
-	}
-
-	// Check if parsed UE count matches input count
-	if len(result.Results) != len(records) {
-		logger.AnalyzerLog.Warnf("[LLMClient] ⚠ UE count mismatch: sent %d UEs, but parsed %d results from LLM", len(records), len(result.Results))
-	}
-
-	// Calculate latency
-	latency := time.Since(startTime)
-	logger.AnalyzerLog.Infof("[LLMClient] ✓ Successfully parsed %d UE results (output size: %d bytes, latency: %v)", len(result.Results), len(content), latency)
-	return &result, nil
-}
-
-// createDefaultBatchResult creates default "normal" results for fail-open when parsing fails
-func (c *LLMClient) createDefaultBatchResult(records []*models.UeTrafficRecord) *models.BatchInferenceResult {
-	results := make([]*models.InferenceResult, len(records))
-	for i, record := range records {
-		results[i] = &models.InferenceResult{
+	// Extract risk score using regex (fault-tolerant)
+	match := c.scoreRegex.FindStringSubmatch(rawContent)
+	if len(match) < 2 {
+		// No valid score found, return default (fail-open)
+		logger.AnalyzerLog.Warnf("[LLMClient] ⚠️  %s: Failed to parse Risk Score from LLM response (regex mismatch)", record.Supi)
+		logger.AnalyzerLog.Warnf("[LLMClient] Raw response: %s", rawContent)
+		logger.AnalyzerLog.Warnf("[LLMClient] Applying fail-open: defaulting to score 0.1 (low risk)")
+		return &models.InferenceResult{
 			Supi:         record.Supi,
-			AnomalyScore: 0.1, // Default low risk score for fail-open
-		}
+			AnomalyScore: 0.1,
+		}, nil
 	}
-	return &models.BatchInferenceResult{
-		Results: results,
+
+	score, err := strconv.ParseFloat(match[1], 64)
+	if err != nil {
+		logger.AnalyzerLog.Warnf("[LLMClient] ⚠️  %s: Failed to parse score string '%s': %v", record.Supi, match[1], err)
+		logger.AnalyzerLog.Warnf("[LLMClient] Applying fail-open: defaulting to score 0.1 (low risk)")
+		return &models.InferenceResult{
+			Supi:         record.Supi,
+			AnomalyScore: 0.1,
+		}, nil
 	}
+
+	logger.AnalyzerLog.Debugf("[LLMClient] ✓ %s: Parsed anomaly score = %.2f", record.Supi, score)
+
+	return &models.InferenceResult{
+		Supi:         record.Supi,
+		AnomalyScore: score,
+	}, nil
 }
 
 func (c *LLMClient) HealthCheck(ctx context.Context) error {

@@ -147,42 +147,35 @@ Analyze the user input now. Output JSON only, no explanation.
 
 ⚠️ **關鍵限制**: Qwen 2.5 1.5B 處理大批次時容易出錯
 
-| 批次大小 | 狀態 | 說明 |
-|---------|------|------|
-| 1-5 UEs | ✅ 最佳 | 穩定、快速、格式正確率高 |
-| 5-10 UEs | ⚠️ 可接受 | 偶有格式錯誤，需處理 |
-| 10-20 UEs | ⚠️ 風險 | 容易「算錯行數」或「JSON 格式損壞」|
-| 20+ UEs | ❌ 不建議 | 極高錯誤率，效能下降 |
+### 3.2 目前實作方式：單 UE 並發處理
 
-### 3.2 建議實作方式
-
-**選項 A: 單一批次請求** (目前實作)
+**架構**: 每個 UE 獨立發送推論請求，使用 Goroutines 並發處理
 ```go
-// 一次發送所有 UE，依賴 LLM Server 處理
-batchResult, err := llmClient.PredictBatch(ctx, records)
-```
+// AnomalyDetector.HandleBatch 內部實作
+const maxConcurrent = 100  // 最大並發數限制
+sem := make(chan struct{}, maxConcurrent)
 
-**選項 B: 分批發送 + Goroutines** (建議改進)
-```go
-// 分成多個小批次，並行處理
-const batchSize = 5
 var wg sync.WaitGroup
-resultsChan := make(chan *InferenceResult, len(records))
-
-for i := 0; i < len(records); i += batchSize {
-    end := min(i+batchSize, len(records))
-    batch := records[i:end]
-    
+for _, record := range records {
+    sem <- struct{}{}  // 取得信號量
     wg.Add(1)
-    go func(b []*UeTrafficRecord) {
+    
+    go func(r *models.UeTrafficRecord) {
         defer wg.Done()
-        result, err := llmClient.PredictBatch(ctx, b)
+        defer func() { <-sem }()  // 釋放信號量
+        
+        result, err := c.llmClient.PredictSingleUE(ctx, r)
         // 處理結果...
-    }(batch)
+    }(record)
 }
-
 wg.Wait()
 ```
+
+**優點**:
+- ✅ 每個 UE 獨立處理，避免批次格式錯誤問題
+- ✅ 使用 HTTP Keep-Alive 連線池 (MaxIdleConnsPerHost=100)
+- ✅ 信號量限制並發數，避免 LLM Server 過載
+- ✅ 簡化 Prompt 格式，提高推論穩定性
 
 ---
 
@@ -190,13 +183,13 @@ wg.Wait()
 
 ### 4.1 常見錯誤與解法
 
-#### 錯誤 1: `unexpected end of JSON input` (JSON 被截斷)
+#### 錯誤 1: 正則表達式無法匹配分數
 
-**症狀**: Log 顯示 `Content length: 999 bytes` 但 JSON 不完整  
-**原因**: `max_tokens` 設定太小（如 50），導致 llama-server 強制截斷輸出  
-**解法**: 增加 `max_tokens` 到 **1000** (批次 10 UEs) 或 **2000** (批次 20 UEs)
+**症狀**: Log 顯示 `Risk Score not found in response`  
+**原因**: LLM 輸出格式變化（如 "risk_score: 0.8" 而非 "Risk Score: 0.8"）  
+**解法**: 使用寬鬆的正則表達式 `Risk Score:\s*(0\.\d+|1\.0|0|1)`，並啟用 fail-open 機制
 
-#### 錯誤 2: 格式不穩定（多餘欄位或錯誤結構）
+#### 錯誤 2: 連線逾時或伺服器無回應
 
 **症狀**: 模型輸出 7 個欄位但某些值錯誤，或順序混亂  
 **解法**: 使用 **JSON Schema** 強制鎖定結構：
@@ -242,11 +235,14 @@ EXAMPLE OUTPUT:
 ⚠️ **關鍵安全機制**: 當 LLM 推論失敗時，避免阻塞整個網路
 
 ```go
-result, err := llmClient.PredictBatch(ctx, records)
+result, err := llmClient.PredictSingleUE(ctx, record)
 if err != nil {
-    // 預設視為 Normal，記錄錯誤但繼續運作
-    logger.Warnf("LLM inference failed: %v, assuming Normal", err)
-    return defaultNormalResult, nil
+    // 預設視為 Normal (0.0)，記錄錯誤但繼續運作
+    logger.Warnf("LLM inference failed for %s: %v, assuming Normal", record.Supi, err)
+    return &models.InferenceResult{
+        Supi:         record.Supi,
+        AnomalyScore: 0.0,
+    }, nil
 }
 ```
 
@@ -254,17 +250,18 @@ if err != nil {
 
 ## 5. 效能優化建議 (Performance Optimization)
 
-### 5.1 非同步處理 (Asynchronous Processing)
+### 5.1 並發處理架構 (Concurrent Processing)
 
-**當前架構**:  
+**當前架構** (已實作):  
 ```
-Monitor → Analyzer → InferenceQueue (Single Worker) → Detector → LLM Server
+Monitor → Analyzer → InferenceQueue (Single Worker) → Detector → Concurrent Single-UE Requests → LLM Server
 ```
 
-**建議改進**:
-1. **使用 Goroutine Pool**: InferenceQueue 使用多個 Worker 並行處理
-2. **批次分割**: 將大批次 (20 UEs) 分成小批次 (5 UEs) 並行發送
-3. **Context Timeout**: 每個請求設定合理超時 (5-10 秒)
+**關鍵設計**:
+1. ✅ **HTTP 連線池**: MaxIdleConnsPerHost=100，復用連線降低開銷
+2. ✅ **信號量控制**: 限制最大並發數為 100，避免過載
+3. ✅ **Goroutine 並發**: 每個 UE 獨立處理，充分利用多核心
+4. ✅ **Context Timeout**: 每個請求超時 5 秒，避免長時間等待
 
 ### 5.2 延遲測量
 

@@ -20,8 +20,8 @@ graph TB
         
         subgraph "Inference Pipeline"
             InfQueue[InferenceQueue<br/>推論佇列<br/>LLM 推論請求]
-            Detector[AnomalyDetector<br/>異常偵測器]
-            LLMClient[LLM Client<br/>HTTP 客戶端<br/>- OpenAI-compatible<br/>- json_schema + One-Shot prompt<br/>- measures latency<br/>- WARN on UE count mismatch]
+            Detector[AnomalyDetector<br/>異常偵測器<br/>Single-UE Concurrent Mode]
+            LLMClient[LLM Client<br/>HTTP 客戶端<br/>- OpenAI-compatible<br/>- Key-Value Prompt Format<br/>- Connection Pooling MaxIdleConnsPerHost: 100<br/>- Semaphore Concurrency Control]
             LLMServer["LLM Server<br/>外部推論服務<br/>POST /v1/chat/completions (OpenAI-compatible)"]
         end
         
@@ -57,9 +57,9 @@ graph TB
     Analyzer -->|Batch UeTrafficRecord| InfQueue
     
     InfQueue -->|Worker| Detector
-    Detector -->|Batch Split<br/>Configurable sub-batch default: 10 UEs| LLMClient
-    LLMClient -->|Parallel Goroutines<br/>POST /v1/chat/completions OpenAI-compatible, json_schema enforced| LLMServer
-    LLMServer -->|BatchInferenceResult<br/>per sub-batch| LLMClient
+    Detector -->|Single UE per Request<br/>Concurrent Goroutines max: 100<br/>Semaphore Control| LLMClient
+    LLMClient -->|One HTTP Request per UE<br/>POST /v1/chat/completions<br/>Key-Value Format| LLMServer
+    LLMServer -->|InferenceResult<br/>per UE| LLMClient
     Detector -->|InferenceResult<br/>per UE sorted by SUPI| ExpQueue
     
     ExpQueue -->|Worker| Dispatcher
@@ -141,10 +141,16 @@ sequenceDiagram
     par Inference Processing
         loop Inference Worker
             IQ->>D: Dequeue Batch
-            D->>LC: PredictBatch(ctx, records)
-            LC->>LS: POST /v1/chat/completions (OpenAI-compatible)<br/>json_schema + One-Shot prompt
-            LS-->>LC: BatchInferenceResult
-            Note over D: 遍歷批次結果
+            Note over D: Process Each UE Concurrently<br/>Semaphore: max 100 in-flight<br/>Connection Pool: Keep-Alive
+            par Concurrent UE Processing
+                D->>LC: PredictSingleUE(ctx, ue1)
+                D->>LC: PredictSingleUE(ctx, ue2)
+                D->>LC: PredictSingleUE(ctx, ue3)
+                Note over LC: ...
+            end
+            LC->>LS: POST /v1/chat/completions per UE<br/>Key-Value Format: ID:xxx, PPS:x.x, ...
+            LS-->>LC: Single InferenceResult
+            Note over D: Collect All Results<br/>Sort by SUPI
             loop For Each Result
                 D->>EQ: Enqueue InferenceResult
             end
@@ -266,7 +272,7 @@ graph TB
     subgraph "Dual Pipeline System"
         direction TB
         FA -->|BatchTrafficRecords| ExpQueue["ExportQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
-        FA -->|Batch Records| InfQueue["InferenceQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
+        FA -->|UE Records Array| InfQueue["InferenceQueue<br/>---<br/>Buffered Channel<br/>容量: 10000"]
         
         subgraph "Export Workers"
             EW1[Worker 1]
@@ -289,11 +295,11 @@ graph TB
         ExpQueue -->|Distribute| EW4
     end
     
-    subgraph "Inference Processing"
-        IW1 -->|detector.HandleBatch| Detector["AnomalyDetector<br/>---<br/>LLM 批次推論"]
+    subgraph "Inference Processing - Single UE Concurrent"
+        IW1 -->|detector.HandleBatch| Detector["AnomalyDetector<br/>---<br/>單UE並發推論"]
         IW2 -->|detector.HandleBatch| Detector
         
-        Detector -->|LLMClient.PredictBatch| LLMServer["LLM Server<br/>:5001<br/>POST /v1/chat/completions<br/>OpenAI-compatible, json_schema enforced, sub-batches via goroutines"]
+        Detector -->|One Request Per UE<br/>Semaphore Control<br/>Max 100 Concurrent| LLMServer["LLM Server<br/>:5001<br/>POST /v1/chat/completions<br/>Key-Value Format"]
         
         Detector -->|Per-UE InferenceResult| ExpQueue
     end
@@ -526,31 +532,8 @@ type UeTrafficRecord struct {
 }
 ```
 
-### Batch Processing Data Structures
+### Single-UE Processing Data Structures
 ```go
-// 批次流量記錄
-type BatchUeTrafficRecords struct {
-    Records   []*UeTrafficRecord `json:"records"`   // 所有 UE 記錄
-    Timestamp int64              `json:"timestamp"` // 批次時戳
-    BatchSize int                `json:"batch_size"` // UE 數量
-}
-
-// LLM 批次推論請求
-type BatchInferenceRequest struct {
-    SystemPrompt string              `json:"system_prompt,omitempty"` // 系統提示詞
-    Records      []*UeTrafficRecord  `json:"records"`   // 所有 UE 流量記錄
-    Timestamp    int64               `json:"timestamp"` // 時戳
-    BatchSize    int                 `json:"batch_size"` // UE 數量
-}
-
-// LLM 批次推論結果
-type BatchInferenceResult struct {
-    Results      []*InferenceResult `json:"results"`    // 所有 UE 推論結果
-    Timestamp    int64              `json:"timestamp"`  // 時戳
-    BatchSize    int                `json:"batch_size"` // UE 數量
-    ModelVersion string             `json:"model_version,omitempty"` // 模型版本
-}
-
 // 單一 UE 推論結果
 type InferenceResult struct {
     UeIp         string  `json:"ue_ip"`          // UE IP
@@ -682,12 +665,15 @@ configuration:
    - CsvExporter (流量記錄)
    - InferenceResultExporter (推論結果)
 
-5. **InferenceQueue & AnomalyDetector** ✨ **批次處理**
+5. **InferenceQueue & AnomalyDetector** ✨ **單UE並發處理**
    - 10000 容量 buffered channel
    - 2 個並行 worker (可配置)
-   - LLMClient HTTP 客戶端
-    - 向外部 LLM Server POST /v1/chat/completions (OpenAI-compatible, json_schema enforced)
-    - 請求可包含多個 UE（或拆分為子批次），以平衡 token 數與模型穩定性
+   - LLMClient HTTP 客戶端 (優化版)
+    - 向外部 LLM Server POST /v1/chat/completions (OpenAI-compatible)
+    - **每個UE發送一個獨立請求** (Key-Value格式)
+    - 連接池優化: MaxIdleConnsPerHost=100, Keep-Alive enabled
+    - 信號量控制: 最多100個並發請求
+    - Regex解析: 容錯提取風險分數
    - 結果逐一寫回 ExportQueue
 
 6. **配置系統**
@@ -702,13 +688,18 @@ configuration:
    - 隊列完整排空
    - 檔案完整 flush
 
-8. **完整測試** ✨ **新**
+8. **完整測試** ✨ **更新至 Single-UE 架構**
    - BaseQueue 測試 (4 tests)
    - ExportQueue 測試 (4 tests)
    - InferenceQueue 測試 (2 tests)
-   - LLMClient 測試 (5 tests)
-   - AnomalyDetector 測試 (3 tests)
+   - LLMClient 測試 (5 tests) - 包含 PredictSingleUE 測試
+   - AnomalyDetector 測試 (3 tests) - 單UE並發處理測試
    - **總計 18 個測試全通過**
+
+9. **Prompt Preview 工具** ✨ **新增單UE模式**
+   - 支援單UE預覽模式 (`-single` flag)
+   - 顯示 Key-Value 格式的 prompt
+   - 統計資訊包含 token 優化說明
 
 #### 📋 組件清單
 
@@ -730,33 +721,45 @@ configuration:
 
 ```yaml
 anomalyDetection:
-  enable: true                            # 啟用異常檢測
-  serverUrl: "http://127.0.0.1:5000"     # LLM 服務地址
-  timeout: 5                              # 請求超時 (秒)
-  batchSize: 5                            # 最佳批次大小 (5-10 UEs)
-  systemPromptPath: ./prompts/anomaly_detection_basic.txt
+  enable: true                                           # 啟用異常檢測
+  serverUrl: "http://127.0.0.1:5000"                    # LLM 服務地址
+  timeout: 5                                             # 請求超時 (秒)
+  maxConcurrent: 100                                     # 最大並發請求數 (預設: 100)
+  systemPromptPath: ./prompts/anomaly_detection_single_ue.txt  # 單UE提示詞模板
 ```
 
-**效能優化特性** ✨ **最新版本 (2025-12-15)**
+**效能優化特性** ✨ **最新版本 (2025-12-16) - Single-UE Concurrent Architecture**
 
-1. **批次分割 (Batch Splitting)**
-   - 大批次 (例如 20 UEs) 自動分割為小批次 (5 UEs)
-   - 避免小型 LLM (Qwen 2.5 1.5B) 因批次過大導致格式錯誤
-   - 可透過 `batchSize` 配置調整 (建議 5-10)
+1. **單UE並發請求 (Single-UE Concurrent Requests)**
+   - 每個UE發送一個獨立的HTTP請求
+   - 使用信號量 (Semaphore) 控制並發數量 (預設: 100)
+   - 避免瞬間請求過多導致服務器擁塞
 
-2. **並行處理 (Parallel Processing with Goroutines)**
-   - 多個子批次同時發送到 LLM 伺服器
-   - 顯著降低總推論延遲 (20 UEs: 從 ~2s 降至 ~500ms)
-   - 每個 goroutine 使用獨立的 context 和 timeout
+2. **連接池優化 (Connection Pooling)**
+   - MaxIdleConns: 1000 (允許大量閒置連接)
+   - MaxIdleConnsPerHost: 100 (關鍵: 必須 >= 並發目標)
+   - Keep-Alive 啟用，重用TCP連接
+   - 參考: high_speed_HTTPclient.md
 
-3. **Fail-Open 機制**
-   - LLM 推論失敗時自動返回 "Normal" 預設結果
+3. **Key-Value Prompt格式**
+   - 精簡的輸入格式: `ID:xxx, PPS:x.x, Len:xxx, ...`
+   - 大幅減少 input tokens，提升速度
+   - 移除Global Network Context (暫不實作)
+   - 每個請求僅需 ~10 output tokens
+
+4. **Fail-Open 機制**
+   - LLM 推論失敗時自動返回 "Normal" 預設結果 (score: 0.1)
+   - Regex容錯解析: 從LLM輸出提取風險分數
    - 避免網路流量因推論錯誤而中斷
    - 記錄錯誤但繼續運作，確保系統可用性
 
-4. **結果排序 (SUPI-based Sorting)**
+5. **結果排序 (SUPI-based Sorting)**
    - 推論結果按 SUPI 排序後輸出
    - 確保輸出檔案順序一致，便於分析
+
+6. **性能指標追蹤**
+   - 記錄每批次的處理時間和吞吐量
+   - 日誌格式: `Batch complete: N UEs analyzed in Xms (Y.YY req/s)`
 
 **啟用異常檢測的步驟:**
 1. 修改 config/anlfcfg.yaml:
@@ -765,7 +768,8 @@ anomalyDetection:
          enable: true
          serverUrl: "http://127.0.0.1:5000"   # OpenAI-compatible LLM server base URL
          timeout: 5
-         batchSize: 10                         # 子批次大小（建議 5-10）
+         maxConcurrent: 100                    # 最大並發請求數 (根據服務器性能調整)
+         systemPromptPath: ./prompts/anomaly_detection_single_ue.txt
      ```
 
 2. 啟動 LLM 推論伺服器:
@@ -773,15 +777,22 @@ anomalyDetection:
     # 服務必須在指定地址監聽
     # 實作 POST /v1/chat/completions 端點 (OpenAI-compatible Chat Completions)
     # 實作 GET /health 端點
+    # 建議使用 -np 參數控制並發處理能力 (例如: -np 100)
    
-    # 範例：啟動 mock LLM server
+    # 範例：啟動高性能 LLM server
     cd test_LLM_server
-    python3 llm_server.py 5001
+    python3 llm_server.py -m Qwen/Qwen2.5-1.5B-Instruct -np 100
     ```
 
 3. 啟動 AnLF:
    ```bash
    ./bin/anlf -cfg config/anlfcfg.yaml
+   ```
+
+4. 使用 prompt_preview 工具測試:
+   ```bash
+   # 預覽單UE模式的prompt
+   ./bin/prompt_preview -prompt ./prompts/anomaly_detection_single_ue.txt -ues 5 -single
    ```
 
 ### 資料流完整版本
@@ -807,17 +818,24 @@ anomalyDetection:
     │
     └─→ [InferenceQueue] (if enabled, []*UeTrafficRecord)
             ├─ 2 Workers → [AnomalyDetector.HandleBatch]
-            │   ├─→ [LLMClient.PredictBatch]
-            │   │       └─→ POST http://127.0.0.1:5001/v1/chat/completions
-            │   │           (OpenAI-compatible; supports json_schema, One-Shot; sub-batches possible)
-            │   │           ↓
-            │   │       [LLM Server]
-            │   │           ↓
-            │   │       BatchInferenceResult
-            │   │           ↓
-            │   │       逐一拆分為 InferenceResult
+            │   ├─→ Semaphore控制 (max 100 in-flight)
+            │   ├─→ For Each UE: Spawn Goroutine
+            │   │   ├─→ [LLMClient.PredictSingleUE(ctx, ue)]
+            │   │   │   └─→ POST http://127.0.0.1:5001/v1/chat/completions
+            │   │   │       (Key-Value Format: ID:xxx, PPS:x.x, Len:xxx, ...)
+            │   │   │       ↓
+            │   │   │   [LLM Server] (每UE一個請求)
+            │   │   │       ↓
+            │   │   │   InferenceResult (Regex提取風險分數)
+            │   │   └─→ Collect Result
+            │   ├─→ Wait All Goroutines
+            │   ├─→ Sort Results by SUPI
             │   └─→ [ExportQueue] (feedback loop, per UE)
             └─ Buffered Channel (capacity: 10000)
+            
+    ✨ 連接池優化: MaxIdleConnsPerHost=100, Keep-Alive=true
+    ✨ 並發控制: Semaphore限制最多100個並行請求
+    ✨ 容錯處理: Regex解析 + Fail-Open機制
 ```
 
 ### NWDAF & MTLF

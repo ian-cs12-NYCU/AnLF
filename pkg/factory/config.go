@@ -62,11 +62,13 @@ type Monitoring struct {
 }
 
 type AnomalyDetection struct {
-	Enable           bool   `yaml:"enable" valid:"type(bool)"`
-	ServerURL        string `yaml:"serverUrl" valid:"url,optional"`
-	Timeout          int    `yaml:"timeout" valid:"type(int),optional"`             // in seconds
-	SystemPromptPath string `yaml:"systemPromptPath" valid:"type(string),optional"` // path to system prompt file
-	BatchSize        int    `yaml:"batchSize" valid:"type(int),optional"`           // optimal batch size for LLM (5-10 UEs recommended)
+	Enable           bool    `yaml:"enable" valid:"type(bool)"`
+	ServerURL        string  `yaml:"serverUrl" valid:"url,optional"`
+	Timeout          int     `yaml:"timeout" valid:"type(int),optional"`             // in seconds
+	SystemPromptPath string  `yaml:"systemPromptPath" valid:"type(string),optional"` // path to system prompt file
+	BatchSize        int     `yaml:"batchSize" valid:"type(int),optional"`           // optimal batch size for LLM (5-10 UEs recommended)
+	Temperature      float64 `yaml:"temperature" valid:"type(float64),optional"`     // LLM temperature (0.0-2.0, default: 0.1)
+	MaxTokens        int     `yaml:"maxTokens" valid:"type(int),optional"`           // Max response tokens (default: 50)
 }
 
 type Logger struct {
@@ -372,4 +374,22 @@ func (c *Config) GetAnomalyDetectionBatchSize() int {
 		return c.Configuration.AnomalyDetection.BatchSize
 	}
 	return 5 // default batch size (optimal for Qwen 2.5 1.5B)
+}
+
+func (c *Config) GetAnomalyDetectionTemperature() float64 {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.Temperature > 0 {
+		return c.Configuration.AnomalyDetection.Temperature
+	}
+	return 0.1 // default temperature (low randomness for consistent detection)
+}
+
+func (c *Config) GetAnomalyDetectionMaxTokens() int {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.MaxTokens > 0 {
+		return c.Configuration.AnomalyDetection.MaxTokens
+	}
+	return 50 // default max tokens (sufficient for "Risk Score: X.X")
 }

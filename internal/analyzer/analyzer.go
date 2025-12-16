@@ -90,7 +90,7 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 
 	// Log each UE
 	for _, record := range batch.Records {
-		logger.AnalyzerLog.Infof("Received traffic record for UE %s (SUPI: %s)", record.UeIp, record.Supi)
+		logger.AnalyzerLog.Debugf("Received traffic record for UE %s (SUPI: %s)", record.UeIp, record.Supi)
 	}
 
 	// Send entire batch to ExportQueue (CSV exporter will handle sorting and writing)
