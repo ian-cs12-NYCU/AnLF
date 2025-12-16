@@ -15,6 +15,7 @@ type AnomalyDetector struct {
 	inferenceQueue *queue.InferenceQueue
 	exportQueue    *queue.ExportQueue
 	llmClient      *LLMClient
+	llmTimeout     time.Duration // Store timeout for diagnostics
 	stopChan       chan struct{}
 	doneChan       chan struct{}
 	enabled        bool
@@ -50,6 +51,7 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 
 	detector := &AnomalyDetector{
 		llmClient:   llmClient,
+		llmTimeout:  cfg.LLMTimeout,
 		exportQueue: exportQueue,
 		stopChan:    make(chan struct{}),
 		doneChan:    make(chan struct{}),
@@ -105,7 +107,15 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 			// Send single UE request
 			result, err := d.llmClient.PredictSingleUE(ctx, ue)
 			if err != nil {
-				logger.AnalyzerLog.Warnf("[AnomalyDetector] %s: LLM prediction failed: %v (fail-open: assuming Normal)", ue.Supi, err)
+				// Enhanced error logging with categorization
+				if ctx.Err() == context.DeadlineExceeded {
+					logger.AnalyzerLog.Warnf("[AnomalyDetector] ⏱️  %s: TIMEOUT - Request exceeded %.2fs (fail-open: Normal)",
+						ue.Supi, d.llmTimeout.Seconds())
+				} else if ctx.Err() == context.Canceled {
+					logger.AnalyzerLog.Warnf("[AnomalyDetector] 🚫 %s: CANCELED - Request was cancelled (fail-open: Normal)", ue.Supi)
+				} else {
+					logger.AnalyzerLog.Warnf("[AnomalyDetector] ❌ %s: ERROR - %v (fail-open: Normal)", ue.Supi, err)
+				}
 				// Fail-Open: Create default "Normal" result
 				result = &models.InferenceResult{
 					Supi:         ue.Supi,
@@ -127,7 +137,16 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 	wg.Wait()
 
 	if errorCount > 0 {
-		logger.AnalyzerLog.Warnf("[AnomalyDetector] %d/%d UEs encountered errors (fail-open applied)", errorCount, len(records))
+		errorRate := float64(errorCount) / float64(len(records)) * 100
+		logger.AnalyzerLog.Warnf("╔═══════════════════════════════════════════════════════════════════╗")
+		logger.AnalyzerLog.Warnf("║ ANOMALY DETECTOR: %d/%d UEs encountered errors (%.1f%%)           ", errorCount, len(records), errorRate)
+		logger.AnalyzerLog.Warnf("║ Fail-open applied: All errors treated as Normal (score=0.1)      ")
+		logger.AnalyzerLog.Warnf("║ Timeout setting: %.2fs                                            ", d.llmTimeout.Seconds())
+		logger.AnalyzerLog.Warnf("║ Possible causes:                                                  ")
+		logger.AnalyzerLog.Warnf("║   • LLM server overloaded (too many concurrent requests)          ")
+		logger.AnalyzerLog.Warnf("║   • Network latency or congestion                                 ")
+		logger.AnalyzerLog.Warnf("║   • Timeout too short for current load (consider increasing)      ")
+		logger.AnalyzerLog.Warnf("╚═══════════════════════════════════════════════════════════════════╝")
 	} else {
 		logger.AnalyzerLog.Infof("[AnomalyDetector] ✓ Successfully processed %d UEs (all parsed successfully)", len(records))
 	}

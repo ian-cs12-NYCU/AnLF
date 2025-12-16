@@ -109,6 +109,16 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord) (systemC
 // PredictSingleUE sends a single UE traffic record to LLM server for anomaly detection
 // Uses OpenAI-compatible API with optimized key-value prompt format
 func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTrafficRecord) (*models.InferenceResult, error) {
+	// Track request timing for diagnostics
+	startTime := time.Now()
+	defer func() {
+		elapsed := time.Since(startTime)
+		if elapsed > c.timeout/2 {
+			logger.AnalyzerLog.Debugf("[LLMClient] ⚠️  %s: Slow request detected (%.2fs / %.2fs timeout)", 
+				record.Supi, elapsed.Seconds(), c.timeout.Seconds())
+		}
+	}()
+
 	// Build key-value format prompt
 	systemContent, userContent := c.BuildSingleUEPrompt(record)
 
@@ -137,6 +147,11 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		// Enhanced error reporting with timing info
+		elapsed := time.Since(startTime)
+		logger.AnalyzerLog.Errorf("[LLMClient] ❌ %s: HTTP request failed after %.2fs (timeout: %.2fs)",
+			record.Supi, elapsed.Seconds(), c.timeout.Seconds())
+		logger.AnalyzerLog.Errorf("[LLMClient] Error details: %v", err)
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
