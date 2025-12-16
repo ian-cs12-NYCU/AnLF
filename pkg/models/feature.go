@@ -21,6 +21,7 @@ type UeTrafficRecord struct {
 	Timestamp int64  `json:"ts" csv:"timestamp"`
 	Supi      string `json:"supi" csv:"supi"`
 	UeIp      string `json:"ip" csv:"ue_ip"`
+	PollID    uint64 `json:"-" csv:"-"` // Poll sequence number (for logging only, not exported)
 }
 
 // BatchUeTrafficRecords represents a batch of UE traffic records collected in one monitoring cycle
@@ -28,4 +29,5 @@ type BatchUeTrafficRecords struct {
 	Records   []*UeTrafficRecord `json:"records"`
 	Timestamp int64              `json:"timestamp"`
 	BatchSize int                `json:"batch_size"`
+	PollID    uint64             `json:"poll_id"` // Sequential poll number for tracking
 }

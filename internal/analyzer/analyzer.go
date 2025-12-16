@@ -16,6 +16,7 @@ type FlowAnalyzer struct {
 	anomalyDetector AnomalyDetector
 	stopChan        chan struct{}
 	doneChan        chan struct{}
+	pollCounter     uint64 // Increment for each poll batch to track processing order
 }
 
 type AnomalyDetector interface {
@@ -86,27 +87,32 @@ func (a *FlowAnalyzer) processLoop(ctx context.Context) {
 }
 
 func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
-	logger.AnalyzerLog.Infof("Received batch of %d traffic records", batch.BatchSize)
+	// Increment poll counter and assign to batch
+	a.pollCounter++
+	batch.PollID = a.pollCounter
 
-	// Log each UE
+	logger.AnalyzerLog.Infof("[Poll #%d] Received batch of %d traffic records", batch.PollID, batch.BatchSize)
+
+	// Assign poll ID to each record (for logging in anomaly detector)
 	for _, record := range batch.Records {
-		logger.AnalyzerLog.Debugf("Received traffic record for UE %s (SUPI: %s)", record.UeIp, record.Supi)
+		record.PollID = batch.PollID
+		logger.AnalyzerLog.Debugf("[Poll #%d] Received traffic record for UE %s (SUPI: %s)", batch.PollID, record.UeIp, record.Supi)
 	}
 
 	// Send entire batch to ExportQueue (CSV exporter will handle sorting and writing)
 	msg := queue.NewBatchTrafficRecordsMessage(batch)
 	if err := a.exportQueue.EnqueueExport(msg); err != nil {
-		logger.AnalyzerLog.Errorf("Failed to enqueue batch for export: %v", err)
+		logger.AnalyzerLog.Errorf("[Poll #%d] Failed to enqueue batch for export: %v", batch.PollID, err)
 	} else {
-		logger.AnalyzerLog.Debugf("Enqueued batch of %d records for export", batch.BatchSize)
+		logger.AnalyzerLog.Debugf("[Poll #%d] Enqueued batch of %d records for export", batch.PollID, batch.BatchSize)
 	}
 
 	// Send entire batch to anomaly detector's inference queue for batch LLM inference
 	if a.anomalyDetector != nil && a.anomalyDetector.IsEnabled() {
 		if err := a.anomalyDetector.EnqueueBatch(batch.Records); err != nil {
-			logger.AnalyzerLog.Errorf("Failed to enqueue batch for anomaly detection: %v", err)
+			logger.AnalyzerLog.Errorf("[Poll #%d] Failed to enqueue batch for anomaly detection: %v", batch.PollID, err)
 		} else {
-			logger.AnalyzerLog.Debugf("Enqueued batch of %d records for anomaly detection", batch.BatchSize)
+			logger.AnalyzerLog.Debugf("[Poll #%d] Enqueued batch of %d records for anomaly detection", batch.PollID, batch.BatchSize)
 		}
 	}
 }

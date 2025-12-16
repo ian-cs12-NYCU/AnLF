@@ -76,8 +76,15 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 		return nil
 	}
 
+	// Get pollID from first record (all records in batch have same pollID)
+	pollID := uint64(0)
+	if len(records) > 0 && records[0] != nil {
+		pollID = records[0].PollID
+	}
+
 	startTime := time.Now()
-	logger.AnalyzerLog.Infof("[AnomalyDetector] Processing batch of %d UEs (single-UE concurrent mode)", len(records))
+	logPrefix := fmt.Sprintf("[Poll #%d]", pollID)
+	logger.AnalyzerLog.Infof("%s [AnomalyDetector] Processing batch of %d UEs (single-UE concurrent mode)", logPrefix, len(records))
 
 	// Semaphore for concurrency control (limit in-flight requests)
 	// Reference: high_speed_HTTPclient.md - prevents server congestion
@@ -109,12 +116,12 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 			if err != nil {
 				// Enhanced error logging with categorization
 				if ctx.Err() == context.DeadlineExceeded {
-					logger.AnalyzerLog.Warnf("[AnomalyDetector] ⏱️  %s: TIMEOUT - Request exceeded %.2fs (fail-open: Normal)",
-						ue.Supi, d.llmTimeout.Seconds())
+					logger.AnalyzerLog.Warnf("%s [AnomalyDetector] ⏱️  %s: TIMEOUT - Request exceeded %.2fs (fail-open: Normal)",
+						logPrefix, ue.Supi, d.llmTimeout.Seconds())
 				} else if ctx.Err() == context.Canceled {
-					logger.AnalyzerLog.Warnf("[AnomalyDetector] 🚫 %s: CANCELED - Request was cancelled (fail-open: Normal)", ue.Supi)
+					logger.AnalyzerLog.Warnf("%s [AnomalyDetector] 🚫 %s: CANCELED - Request was cancelled (fail-open: Normal)", logPrefix, ue.Supi)
 				} else {
-					logger.AnalyzerLog.Warnf("[AnomalyDetector] ❌ %s: ERROR - %v (fail-open: Normal)", ue.Supi, err)
+					logger.AnalyzerLog.Warnf("%s [AnomalyDetector] ❌ %s: ERROR - %v (fail-open: Normal)", logPrefix, ue.Supi, err)
 				}
 				// Fail-Open: Create default "Normal" result
 				result = &models.InferenceResult{
@@ -138,17 +145,17 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 
 	if errorCount > 0 {
 		errorRate := float64(errorCount) / float64(len(records)) * 100
-		logger.AnalyzerLog.Warnf("╔═══════════════════════════════════════════════════════════════════╗")
-		logger.AnalyzerLog.Warnf("║ ANOMALY DETECTOR: %d/%d UEs encountered errors (%.1f%%)           ", errorCount, len(records), errorRate)
-		logger.AnalyzerLog.Warnf("║ Fail-open applied: All errors treated as Normal (score=0.1)      ")
-		logger.AnalyzerLog.Warnf("║ Timeout setting: %.2fs                                            ", d.llmTimeout.Seconds())
-		logger.AnalyzerLog.Warnf("║ Possible causes:                                                  ")
-		logger.AnalyzerLog.Warnf("║   • LLM server overloaded (too many concurrent requests)          ")
-		logger.AnalyzerLog.Warnf("║   • Network latency or congestion                                 ")
-		logger.AnalyzerLog.Warnf("║   • Timeout too short for current load (consider increasing)      ")
-		logger.AnalyzerLog.Warnf("╚═══════════════════════════════════════════════════════════════════╝")
+		logger.AnalyzerLog.Warnf("%s ╔═══════════════════════════════════════════════════════════════════╗", logPrefix)
+		logger.AnalyzerLog.Warnf("%s ║ ANOMALY DETECTOR: %d/%d UEs encountered errors (%.1f%%)           ", logPrefix, errorCount, len(records), errorRate)
+		logger.AnalyzerLog.Warnf("%s ║ Fail-open applied: All errors treated as Normal (score=0.1)      ", logPrefix)
+		logger.AnalyzerLog.Warnf("%s ║ Timeout setting: %.2fs                                            ", logPrefix, d.llmTimeout.Seconds())
+		logger.AnalyzerLog.Warnf("%s ║ Possible causes:                                                  ", logPrefix)
+		logger.AnalyzerLog.Warnf("%s ║   • LLM server overloaded (too many concurrent requests)          ", logPrefix)
+		logger.AnalyzerLog.Warnf("%s ║   • Network latency or congestion                                 ", logPrefix)
+		logger.AnalyzerLog.Warnf("%s ║   • Timeout too short for current load (consider increasing)      ", logPrefix)
+		logger.AnalyzerLog.Warnf("%s ╚═══════════════════════════════════════════════════════════════════╝", logPrefix)
 	} else {
-		logger.AnalyzerLog.Infof("[AnomalyDetector] ✓ Successfully processed %d UEs (all parsed successfully)", len(records))
+		logger.AnalyzerLog.Infof("%s [AnomalyDetector] ✓ Successfully processed %d UEs (all parsed successfully)", logPrefix, len(records))
 	}
 
 	// Sort results by SUPI to maintain consistent order
@@ -158,17 +165,17 @@ func (d *AnomalyDetector) HandleBatch(records []*models.UeTrafficRecord) error {
 	for _, result := range allResults {
 		msg := queue.NewInferenceResultMessage(result)
 		if err := d.exportQueue.EnqueueExport(msg); err != nil {
-			logger.AnalyzerLog.Errorf("[AnomalyDetector] Failed to enqueue inference result for %s: %v", result.Supi, err)
+			logger.AnalyzerLog.Errorf("%s [AnomalyDetector] Failed to enqueue inference result for %s: %v", logPrefix, result.Supi, err)
 		} else {
-			logger.AnalyzerLog.Debugf("[AnomalyDetector] Analysis complete - SUPI: %s | Anomaly Score: %.3f",
-				result.Supi, result.AnomalyScore)
+			logger.AnalyzerLog.Debugf("%s [AnomalyDetector] Analysis complete - SUPI: %s | Anomaly Score: %.3f",
+				logPrefix, result.Supi, result.AnomalyScore)
 		}
 	}
 
 	duration := time.Since(startTime)
 	throughput := float64(len(allResults)) / duration.Seconds()
-	logger.AnalyzerLog.Infof("[AnomalyDetector] Batch complete: %d UEs analyzed in %v (%.2f req/s)",
-		len(allResults), duration, throughput)
+	logger.AnalyzerLog.Infof("%s [AnomalyDetector] Batch complete: %d UEs analyzed in %v (%.2f req/s)",
+		logPrefix, len(allResults), duration, throughput)
 	return nil
 }
 
