@@ -22,6 +22,20 @@ type AnomalyDetector struct {
 	enabled              bool
 }
 
+// isEmptyRecord checks if a UE traffic record has all feature values set to zero
+// Returns true if the record is empty (no traffic activity)
+func isEmptyRecord(record *models.UeTrafficRecord) bool {
+	return record.UeFeatureVector.LogPPS == 0.0 &&
+		record.UeFeatureVector.AvgLen == 0.0 &&
+		record.UeFeatureVector.IcmpRatio == 0.0 &&
+		record.UeFeatureVector.TcpRatio == 0.0 &&
+		record.UeFeatureVector.UdpRatio == 0.0 &&
+		record.UeFeatureVector.SynRatio == 0.0 &&
+		record.UeFeatureVector.RstRatio == 0.0 &&
+		record.UeFeatureVector.NewFlowRate == 0.0 &&
+		record.UeFeatureVector.FanOut == 0.0
+}
+
 type AnomalyDetectorConfig struct {
 	LLMServerURL         string
 	LLMTimeout           time.Duration
@@ -95,6 +109,8 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 	var mu sync.Mutex
 	allResults := make([]*models.InferenceResult, 0, len(records))
 	errorCount := 0
+	skippedEmptyCount := 0 // Count of UEs skipped due to empty records
+	llmRequestCount := 0   // Count of actual LLM requests sent
 
 	// Process each UE in parallel with concurrency control
 	for _, record := range records {
@@ -106,6 +122,21 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 		go func(ue *models.UeTrafficRecord) {
 			defer wg.Done()
 			defer func() { <-sem }() // Release semaphore slot
+
+			// Check if UE record is empty (all feature values are zero)
+			// If empty, skip LLM request and directly assign risk value = 0
+			if isEmptyRecord(ue) {
+				logger.AnalyzerLog.Debugf("%s [AnomalyDetector] %s: Empty record detected, skipping LLM request (risk=0.0)", logPrefix, ue.Supi)
+				result := &models.InferenceResult{
+					Supi:         ue.Supi,
+					AnomalyScore: 0.0, // Empty records have zero risk
+				}
+				mu.Lock()
+				allResults = append(allResults, result)
+				skippedEmptyCount++
+				mu.Unlock()
+				return
+			}
 
 			// Each goroutine gets its own context with timeout
 			ctx, cancel := context.WithTimeout(context.Background(), d.llmTimeout)
@@ -140,12 +171,18 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 			// Collect result thread-safely
 			mu.Lock()
 			allResults = append(allResults, result)
+			llmRequestCount++ // Count actual LLM request sent
 			mu.Unlock()
 		}(record)
 	}
 
 	// Wait for all goroutines to complete
 	wg.Wait()
+
+	// Log statistics about processing
+	if skippedEmptyCount > 0 {
+		logger.AnalyzerLog.Infof("%s [AnomalyDetector] Skipped %d empty records (no traffic, risk=0.0)", logPrefix, skippedEmptyCount)
+	}
 
 	if errorCount > 0 {
 		errorRate := float64(errorCount) / float64(len(records)) * 100
@@ -177,9 +214,20 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 	}
 
 	duration := time.Since(startTime)
-	throughput := float64(len(allResults)) / duration.Seconds()
-	logger.AnalyzerLog.Infof("%s [AnomalyDetector] Batch complete: %d UEs analyzed in %v (%.2f req/s)",
-		logPrefix, len(allResults), duration, throughput)
+
+	// Calculate throughput metrics based on actual LLM requests and total UEs processed
+	var llmThroughput float64
+	var totalThroughput float64
+	if duration > 0 {
+		llmThroughput = float64(llmRequestCount) / duration.Seconds()
+		totalThroughput = float64(len(allResults)) / duration.Seconds()
+	}
+
+	// Log detailed completion statistics
+	logger.AnalyzerLog.Infof("%s [AnomalyDetector] Batch complete: %d total UEs, %d LLM requests, %d empty (skipped)",
+		logPrefix, len(allResults), llmRequestCount, skippedEmptyCount)
+	logger.AnalyzerLog.Infof("%s [AnomalyDetector] Throughput: %.2f LLM req/s | %.2f total UE/s | Duration: %v",
+		logPrefix, llmThroughput, totalThroughput, duration)
 	return nil
 }
 

@@ -300,3 +300,242 @@ func newMockLLMServer(shouldFail bool, delay time.Duration) *httptest.Server {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 }
+
+// TestAnomalyDetector_EmptyRecords verifies that empty UE records (all zeros) are skipped
+// and directly assigned risk value = 0 without sending LLM request
+func TestAnomalyDetector_EmptyRecords(t *testing.T) {
+	// Track number of LLM prediction requests (not health checks)
+	var llmRequestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only count actual prediction requests, not health checks
+		if r.URL.Path == "/v1/chat/completions" {
+			llmRequestCount.Add(1)
+
+			// Return mock response (simulating single-UE format)
+			openAIResp := map[string]interface{}{
+				"choices": []map[string]interface{}{
+					{
+						"message": map[string]interface{}{
+							"content": "Risk Score: 0.75",
+						},
+					},
+				},
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(openAIResp)
+			return
+		}
+
+		// Handle health check
+		if r.URL.Path == "/health" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	mockHandler := &MockExportHandler{}
+	exportQueue := queue.NewExportQueue(queue.QueueConfig{
+		BufferSize:  100,
+		WorkerCount: 2,
+	}, mockHandler)
+
+	detector, err := NewAnomalyDetector(AnomalyDetectorConfig{
+		Enabled:      true,
+		LLMServerURL: server.URL,
+		LLMTimeout:   5 * time.Second,
+		QueueConfig: queue.QueueConfig{
+			BufferSize:  100,
+			WorkerCount: 2,
+		},
+	}, exportQueue)
+
+	if err != nil {
+		t.Fatalf("Failed to create detector: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := exportQueue.Start(ctx); err != nil {
+		t.Fatalf("Failed to start export queue: %v", err)
+	}
+	defer exportQueue.Stop(2 * time.Second)
+
+	if err := detector.Start(ctx); err != nil {
+		t.Fatalf("Failed to start detector: %v", err)
+	}
+	defer detector.Stop(2 * time.Second)
+
+	// Create batch with mixed records: some empty, some with traffic
+	batch := &models.BatchUeTrafficRecords{
+		Records: []*models.UeTrafficRecord{
+			// Empty record (all zeros) - should skip LLM request
+			{
+				Supi:      "imsi-208930000000001",
+				Timestamp: time.Now().Unix(),
+				UeIp:      "60.60.0.1",
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      0.0,
+					AvgLen:      0.0,
+					TcpRatio:    0.0,
+					UdpRatio:    0.0,
+					IcmpRatio:   0.0,
+					SynRatio:    0.0,
+					RstRatio:    0.0,
+					NewFlowRate: 0.0,
+					FanOut:      0.0,
+				},
+			},
+			// Non-empty record - should send LLM request
+			{
+				Supi:      "imsi-208930000000002",
+				Timestamp: time.Now().Unix(),
+				UeIp:      "60.60.0.2",
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      3.5,
+					AvgLen:      600.0,
+					TcpRatio:    0.8,
+					UdpRatio:    0.15,
+					IcmpRatio:   0.05,
+					SynRatio:    0.1,
+					RstRatio:    0.01,
+					NewFlowRate: 0.5,
+					FanOut:      3.0,
+				},
+			},
+			// Another empty record - should skip LLM request
+			{
+				Supi:      "imsi-208930000000003",
+				Timestamp: time.Now().Unix(),
+				UeIp:      "60.60.0.3",
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      0.0,
+					AvgLen:      0.0,
+					TcpRatio:    0.0,
+					UdpRatio:    0.0,
+					IcmpRatio:   0.0,
+					SynRatio:    0.0,
+					RstRatio:    0.0,
+					NewFlowRate: 0.0,
+					FanOut:      0.0,
+				},
+			},
+		},
+		BatchSize: 3,
+		PollID:    1,
+	}
+
+	if err := detector.EnqueueBatch(batch); err != nil {
+		t.Fatalf("Failed to enqueue batch: %v", err)
+	}
+
+	// Wait for processing
+	time.Sleep(2 * time.Second)
+
+	// Verify: Only 1 LLM request should be sent (for the non-empty record)
+	requestCount := llmRequestCount.Load()
+	if requestCount != 1 {
+		t.Errorf("Expected 1 LLM request (only for non-empty record), got %d", requestCount)
+	}
+
+	// Verify: All 3 UEs should be exported (empty ones should still be in output)
+	exportCount := mockHandler.enqueueCount.Load()
+	if exportCount != 3 {
+		t.Errorf("Expected 3 export messages (all UEs), got %d", exportCount)
+	}
+
+	t.Logf("✓ Empty records test passed: %d LLM requests, %d exports", requestCount, exportCount)
+}
+
+// TestIsEmptyRecord tests the isEmptyRecord helper function
+func TestIsEmptyRecord(t *testing.T) {
+	tests := []struct {
+		name     string
+		record   *models.UeTrafficRecord
+		expected bool
+	}{
+		{
+			name: "all zeros",
+			record: &models.UeTrafficRecord{
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      0.0,
+					AvgLen:      0.0,
+					IcmpRatio:   0.0,
+					TcpRatio:    0.0,
+					UdpRatio:    0.0,
+					SynRatio:    0.0,
+					RstRatio:    0.0,
+					NewFlowRate: 0.0,
+					FanOut:      0.0,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "has LogPPS",
+			record: &models.UeTrafficRecord{
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      3.5,
+					AvgLen:      0.0,
+					IcmpRatio:   0.0,
+					TcpRatio:    0.0,
+					UdpRatio:    0.0,
+					SynRatio:    0.0,
+					RstRatio:    0.0,
+					NewFlowRate: 0.0,
+					FanOut:      0.0,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "has AvgLen",
+			record: &models.UeTrafficRecord{
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      0.0,
+					AvgLen:      500.0,
+					IcmpRatio:   0.0,
+					TcpRatio:    0.0,
+					UdpRatio:    0.0,
+					SynRatio:    0.0,
+					RstRatio:    0.0,
+					NewFlowRate: 0.0,
+					FanOut:      0.0,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "all fields populated",
+			record: &models.UeTrafficRecord{
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      3.5,
+					AvgLen:      600.0,
+					IcmpRatio:   0.05,
+					TcpRatio:    0.8,
+					UdpRatio:    0.15,
+					SynRatio:    0.1,
+					RstRatio:    0.01,
+					NewFlowRate: 0.5,
+					FanOut:      3.0,
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isEmptyRecord(tt.record)
+			if result != tt.expected {
+				t.Errorf("isEmptyRecord() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
