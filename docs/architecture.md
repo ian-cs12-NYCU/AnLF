@@ -9,7 +9,7 @@ graph TB
         UE[UE Devices<br/>使用者設備]
         UPF[UPF<br/>User Plane Function]
         NRF[NRF<br/>Network Repository]
-        SMF[SMF/Mock SMF<br/>Session Management]
+        SMF[SMF<br/>Session Management Function<br/>OAM API]
     end
     
     subgraph "AnLF - Analytics Logical Function"
@@ -50,7 +50,7 @@ graph TB
     UPF -->|GTP-U 封包| eBPF
     
     eBPF -->|Raw Metrics| Monitor
-    SMF -.->|UE Info<br/>IP-SUPI Mapping| Monitor
+    SMF -.->|GET /nsmf-oam/v1/ue-pdu-session-info/<br/>UE Info: IP-SUPI Mapping<br/>Poll every 5s| Monitor
     
     Monitor -->|BatchUeTrafficRecords<br/>via Channel<br/>All UEs per cycle| Analyzer
     Analyzer -->|BatchTrafficRecords| ExpQueue
@@ -647,25 +647,34 @@ configuration:
    - Per-UE 流量統計與特徵萃取
    - 原子操作確保資料一致性
 
-2. **TrafficMonitor**
+2. **SMFClient** ✨ **新增真實 SMF API 整合 (2025-12-16)**
+   - 定期從 SMF OAM API 獲取 UE 資訊
+   - API 端點: GET /nsmf-oam/v1/ue-pdu-session-info/
+   - 輪詢間隔: 5 秒 (可配置)
+   - 維護 UE IP 到 SUPI 的對照表
+   - 自動處理 SMF 無 Session 情況 (404 響應)
+   - 支持優雅關閉 (實現 Lifecycle 接口)
+
+3. **TrafficMonitor**
    - 定期輪詢 eBPF Map (預設 1-5 秒)
+   - 從 SMFClient 獲取 UE SUPI 資訊
    - 特徵向量計算與正規化
    - Go Channel 生產者
 
-3. **FlowAnalyzer**
+4. **FlowAnalyzer**
    - 特徵向量消費者
    - 雙管道分發:
      - ExportQueue: 流量記錄
      - InferenceQueue: LLM 推論請求
 
-4. **ExportQueue & ExportDispatcher**
+5. **ExportQueue & ExportDispatcher**
    - 10000 容量 buffered channel
    - 4 個並行 worker
    - 訊息類型路由
    - CsvExporter (流量記錄)
    - InferenceResultExporter (推論結果)
 
-5. **InferenceQueue & AnomalyDetector** ✨ **單UE並發處理**
+6. **InferenceQueue & AnomalyDetector** ✨ **單UE並發處理**
    - 10000 容量 buffered channel
    - 2 個並行 worker (可配置)
    - LLMClient HTTP 客戶端 (優化版)
@@ -676,23 +685,27 @@ configuration:
     - Regex解析: 容錯提取風險分數
    - 結果逐一寫回 ExportQueue
 
-6. **配置系統**
+7. **配置系統**
    - YAML 配置文件
+   - smf 段落: ✨ **新增**
+     - url: SMF OAM API 基礎 URL (預設: http://127.0.0.2:8000)
+     - pollInterval: 輪詢間隔秒數 (預設: 5)
    - anomalyDetection 段落:
      - enable: 啟用/停用
-     - serverUrl: LLM 伺服器地址
+8    - serverUrl: LLM 伺服器地址
      - timeout: 推論超時
 
 7. **生命週期管理**
    - Graceful shutdown
-   - 隊列完整排空
-   - 檔案完整 flush
-
-8. **完整測試** ✨ **更新至 Single-UE 架構**
+9. **完整測試** ✨ **更新至 Single-UE 架構 + SMF Client**
    - BaseQueue 測試 (4 tests)
    - ExportQueue 測試 (4 tests)
    - InferenceQueue 測試 (2 tests)
    - LLMClient 測試 (5 tests) - 包含 PredictSingleUE 測試
+   - AnomalyDetector 測試 (3 tests) - 單UE並發處理測試
+   - SMFClient 測試 (5 tests) ✨ **新增** - API 解析、輪詢、生命週期測試
+   - **總計 23ceQueue 測試 (2 tests)
+10  - LLMClient 測試 (5 tests) - 包含 PredictSingleUE 測試
    - AnomalyDetector 測試 (3 tests) - 單UE並發處理測試
    - **總計 18 個測試全通過**
 
@@ -706,6 +719,7 @@ configuration:
 | 組件 | 狀態 | 說明 |
 |------|------|------|
 | eBPF XDP | ✅ | 核心封包擷取層 |
+| SMFClient | ✅ | SMF OAM API 客戶端 ✨ |
 | TrafficMonitor | ✅ | 特徵監控與計算 |
 | FlowAnalyzer | ✅ | 雙管道分發 |
 | ExportQueue | ✅ | 匯出佇列 |
@@ -720,6 +734,10 @@ configuration:
 #### 🔧 配置要點
 
 ```yaml
+smf:  # ✨ 新增 SMF 配置
+  url: "http://127.0.0.2:8000"                          # SMF OAM API URL
+  pollInterval: 5                                        # 輪詢間隔 (秒)
+
 anomalyDetection:
   enable: true                                           # 啟用異常檢測
   serverUrl: "http://127.0.0.1:5000"                    # LLM 服務地址
@@ -836,6 +854,49 @@ anomalyDetection:
     ✨ 連接池優化: MaxIdleConnsPerHost=100, Keep-Alive=true
     ✨ 並發控制: Semaphore限制最多100個並行請求
     ✨ 容錯處理: Regex解析 + Fail-Open機制
+```
+
+### SMF Client 整合 ✨ **新增 (2025-12-16)**
+
+**功能說明**
+- **目的**: 從真實 SMF 獲取 UE PDU Session 資訊，取代靜態配置文件
+- **API**: GET /nsmf-oam/v1/ue-pdu-session-info/
+- **資料結構**: 維護 UE IP → SUPI 的對照表
+
+**運作流程**
+1. **初始化**: 建立 HTTP 客戶端，設定 SMF URL 和輪詢間隔
+2. **啟動**: 立即發起第一次 API 請求，隨後啟動定期輪詢 goroutine
+3. **輪詢**: 每 N 秒向 SMF 請求一次 UE 資訊
+4. **解析**: 從 JSON 響應中提取 pduAddress (UE IP) 和 supi
+5. **更新**: 原子性更新內部 UE 對照表
+6. **關閉**: 接收停止信號後優雅退出輪詢 goroutine
+
+**容錯處理**
+- **404 響應**: SMF 無 Session 時返回 404，客戶端清空 UE 表並繼續運行
+- **網路錯誤**: 記錄警告但不中斷服務，等待下次輪詢重試
+- **部分資料**: 自動過濾缺少 IP 或 SUPI 的 Session
+
+**介面實現**
+```go
+type UeDataProvider interface {
+    GetSupi(ueIp string) string
+    GetUeCount() int
+    GetAllUeIps() []string
+}
+```
+- **MockSMF**: 從靜態 JSON 文件加載 (用於測試)
+- **SMFClient**: 從真實 SMF API 動態獲取 (生產環境)
+
+**日誌輸出**
+- 啟動時: 顯示 SMF URL 和輪詢間隔
+- 每次成功獲取: 顯示 UE 數量 (例如: "Successfully fetched 20 UE entries from SMF")
+- 錯誤時: 記錄詳細錯誤信息
+
+**配置範例**
+```yaml
+smf:
+  url: http://127.0.0.2:8000     # SMF OAM API 基礎 URL
+  pollInterval: 5                 # 每 5 秒請求一次
 ```
 
 ### NWDAF & MTLF

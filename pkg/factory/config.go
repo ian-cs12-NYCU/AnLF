@@ -42,6 +42,7 @@ type Configuration struct {
 	Recording        *Recording           `yaml:"recording,omitempty" valid:"optional"`
 	Ebpf             *Ebpf                `yaml:"ebpf,omitempty" valid:"optional"`
 	Monitoring       *Monitoring          `yaml:"monitoring,omitempty" valid:"optional"`
+	Smf              *Smf                 `yaml:"smf,omitempty" valid:"optional"`
 	AnomalyDetection *AnomalyDetection    `yaml:"anomalyDetection,omitempty" valid:"optional"`
 }
 
@@ -59,6 +60,11 @@ type Monitoring struct {
 	Enable       bool   `yaml:"enable" valid:"type(bool)"`
 	PollInterval int    `yaml:"pollInterval" valid:"type(int)"` // in seconds
 	UeTablePath  string `yaml:"ueTablePath" valid:"type(string)"`
+}
+
+type Smf struct {
+	Url          string `yaml:"url" valid:"url,optional"`       // SMF OAM API base URL
+	PollInterval int    `yaml:"pollInterval" valid:"type(int)"` // Poll interval in seconds
 }
 
 type AnomalyDetection struct {
@@ -392,4 +398,22 @@ func (c *Config) GetAnomalyDetectionMaxTokens() int {
 		return c.Configuration.AnomalyDetection.MaxTokens
 	}
 	return 50 // default max tokens (sufficient for "Risk Score: X.X")
+}
+
+func (c *Config) GetSmfUrl() string {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.Smf != nil && c.Configuration.Smf.Url != "" {
+		return c.Configuration.Smf.Url
+	}
+	return "http://127.0.0.2:8000" // default SMF OAM API URL
+}
+
+func (c *Config) GetSmfPollInterval() int {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.Smf != nil && c.Configuration.Smf.PollInterval > 0 {
+		return c.Configuration.Smf.PollInterval
+	}
+	return 5 // default 5 seconds
 }

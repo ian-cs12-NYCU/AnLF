@@ -27,6 +27,10 @@ configuration:
     pollInterval: 1
     ueTablePath: /home/vagrant/AnLF/anlf/config/static_ue_list_20.json
   
+  smf:
+    url: http://127.0.0.2:8000  # SMF OAM API base URL
+    pollInterval: 5  # Fetch UE data from SMF every 5 seconds
+  
   anomalyDetection:
     enable: true  # Set to true to enable LLM-based anomaly detection
     serverUrl: http://140.113.208.89:8000  # LLM server endpoint

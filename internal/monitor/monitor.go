@@ -14,30 +14,30 @@ import (
 
 // TrafficMonitor polls eBPF maps and sends records to analyzer
 type TrafficMonitor struct {
-	ebpfMgr       *ebpf.Manager
-	smfClient     *consumer.MockSMF
-	featureChan   chan<- *models.BatchUeTrafficRecords
-	pollInterval  time.Duration
-	windowSeconds float64
-	stopChan      chan struct{}
-	doneChan      chan struct{}
+	ebpfMgr        *ebpf.Manager
+	ueDataProvider consumer.UeDataProvider
+	featureChan    chan<- *models.BatchUeTrafficRecords
+	pollInterval   time.Duration
+	windowSeconds  float64
+	stopChan       chan struct{}
+	doneChan       chan struct{}
 }
 
 // NewTrafficMonitor creates a new traffic monitor
 func NewTrafficMonitor(
 	ebpfMgr *ebpf.Manager,
-	smfClient *consumer.MockSMF,
+	ueDataProvider consumer.UeDataProvider,
 	featureChan chan<- *models.BatchUeTrafficRecords,
 	pollInterval time.Duration,
 ) *TrafficMonitor {
 	return &TrafficMonitor{
-		ebpfMgr:       ebpfMgr,
-		smfClient:     smfClient,
-		featureChan:   featureChan,
-		pollInterval:  pollInterval,
-		windowSeconds: pollInterval.Seconds(),
-		stopChan:      make(chan struct{}),
-		doneChan:      make(chan struct{}),
+		ebpfMgr:        ebpfMgr,
+		ueDataProvider: ueDataProvider,
+		featureChan:    featureChan,
+		pollInterval:   pollInterval,
+		windowSeconds:  pollInterval.Seconds(),
+		stopChan:       make(chan struct{}),
+		doneChan:       make(chan struct{}),
 	}
 }
 
@@ -99,11 +99,11 @@ func (m *TrafficMonitor) pollAndSend() {
 		return
 	}
 
-	// Get all known UEs from SMF (already sorted by SUPI)
-	allUeIps := m.smfClient.GetAllUeIps()
+	// Get all known UEs from UE data provider (already sorted by SUPI)
+	allUeIps := m.ueDataProvider.GetAllUeIps()
 
 	if len(allUeIps) == 0 {
-		logger.MonitorLog.Warnf("No UEs configured in SMF")
+		logger.MonitorLog.Warnf("No UEs configured in UE data provider")
 		return
 	}
 
@@ -114,7 +114,7 @@ func (m *TrafficMonitor) pollAndSend() {
 	timestamp := time.Now().Unix()
 
 	for _, ueIp := range allUeIps {
-		supi := m.smfClient.GetSupi(ueIp)
+		supi := m.ueDataProvider.GetSupi(ueIp)
 
 		var record *models.UeTrafficRecord
 

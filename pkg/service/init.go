@@ -291,12 +291,15 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 	// Create feature channel (batch mode - smaller buffer since each message contains 20 UEs)
 	featureChan := make(chan *models.BatchUeTrafficRecords, 128)
 
-	// Initialize Mock SMF client
-	smfClient := consumer.NewMockSMF()
-	ueTablePath := a.cfg.GetMonitoringUeTablePath()
-	if err := smfClient.LoadUeTable(ueTablePath); err != nil {
-		return err
-	}
+	// Initialize SMF client (use real SMF API)
+	smfUrl := a.cfg.GetSmfUrl()
+	smfPollInterval := time.Duration(a.cfg.GetSmfPollInterval()) * time.Second
+	smfClient := consumer.NewSMFClient(smfUrl, smfPollInterval)
+
+	// Register SMF client for graceful shutdown
+	a.lifecycleManager.Register(smfClient)
+
+	logger.MainLog.Infof("SMF client initialized with URL: %s, poll interval: %v", smfUrl, smfPollInterval)
 
 	// 1. Create traffic exporter based on recording config
 	var trafficExp exporter.Exporter
