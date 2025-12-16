@@ -55,6 +55,27 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 	}
 }
 
+// BuildPrompt constructs the final LLM request with system prompt + user content
+// This function is exposed for testing and debugging purposes (e.g., prompt_preview tool)
+func (c *LLMClient) BuildPrompt(records []*models.UeTrafficRecord) (systemContent string, userContent string, err error) {
+	// System prompt (loaded from file)
+	systemContent = c.systemPrompt
+
+	// Build user prompt with UE traffic data
+	var userPrompt strings.Builder
+	userPrompt.WriteString("Analyze these network traffic records and classify each as 'normal' or 'attack'.\n")
+	userPrompt.WriteString("Return a JSON object with 'results' array containing one result per UE.\n\n")
+
+	recordsJSON, err := json.MarshalIndent(records, "", "  ")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to marshal records: %w", err)
+	}
+	userPrompt.Write(recordsJSON)
+
+	userContent = userPrompt.String()
+	return systemContent, userContent, nil
+}
+
 // PredictBatch sends a batch of UE traffic records to LLM server for anomaly detection
 // Uses OpenAI-compatible API (/v1/chat/completions)
 func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTrafficRecord) (*models.BatchInferenceResult, error) {
@@ -63,16 +84,11 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 	// Start latency measurement
 	startTime := time.Now()
 
-	// Build a structured prompt for the LLM
-	var userPrompt strings.Builder
-	userPrompt.WriteString("Analyze these network traffic records and classify each as 'normal' or 'attack'.\n")
-	userPrompt.WriteString("Return a JSON object with 'results' array containing one result per UE.\n\n")
-
-	recordsJSON, err := json.MarshalIndent(records, "", "  ")
+	// Build prompt using the new function
+	systemContent, userContent, err := c.BuildPrompt(records)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal records: %w", err)
+		return nil, fmt.Errorf("failed to build prompt: %w", err)
 	}
-	userPrompt.Write(recordsJSON)
 
 	// OpenAI Chat Completions API format with json_schema
 	openAIReq := map[string]interface{}{
@@ -80,11 +96,11 @@ func (c *LLMClient) PredictBatch(ctx context.Context, records []*models.UeTraffi
 		"messages": []map[string]string{
 			{
 				"role":    "system",
-				"content": c.systemPrompt,
+				"content": systemContent,
 			},
 			{
 				"role":    "user",
-				"content": userPrompt.String(),
+				"content": userContent,
 			},
 		},
 		"temperature": 0.1,

@@ -1,6 +1,6 @@
 .PHONY: all build clean test run ebpf-generate ebpf-test
 
-all: build
+all: build tools-prompt-preview
 
 # Generate vmlinux.h from kernel BTF
 bpf/vmlinux.h:
@@ -19,6 +19,14 @@ build: ebpf-generate
 	@go build -o bin/anlf ./cmd/main.go
 	@echo "✓ Build complete: bin/anlf"
 
+# Build tools: prompt preview
+.PHONY: tools-prompt-preview
+tools-prompt-preview:
+	@echo "Building tools/prompt_preview..."
+	@mkdir -p bin
+	@go build -o bin/prompt_preview ./tools/prompt_preview.go
+	@echo "✓ Tool built: bin/prompt_preview"
+
 # Build eBPF test tool
 ebpf-test: ebpf-generate
 	@echo "Building eBPF test tool..."
@@ -32,6 +40,7 @@ clean:
 	@rm -rf bin/
 	@rm -f bpf/vmlinux.h
 	@rm -f pkg/ebpf/anlf_bpf.go pkg/ebpf/anlf_bpf.o
+	@rm -f bin/prompt_preview
 	@echo "✓ Clean complete"
 
 test:
