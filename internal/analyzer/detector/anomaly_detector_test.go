@@ -539,3 +539,84 @@ func TestIsEmptyRecord(t *testing.T) {
 		})
 	}
 }
+
+func TestAnomalyDetector_EnabledFieldInitialization(t *testing.T) {
+	mockHandler := &MockExportHandler{}
+	exportQueue := queue.NewExportQueue(queue.QueueConfig{
+		BufferSize:  100,
+		WorkerCount: 2,
+	}, mockHandler)
+
+	// Test disabled detector
+	disabledDetector, err := NewAnomalyDetector(AnomalyDetectorConfig{
+		Enabled: false,
+	}, exportQueue)
+	if err != nil {
+		t.Fatalf("Failed to create disabled detector: %v", err)
+	}
+	if disabledDetector.IsEnabled() {
+		t.Error("Expected detector to be disabled, but IsEnabled() returned true")
+	}
+	if disabledDetector.enabled {
+		t.Error("Expected detector.enabled to be false, but got true")
+	}
+
+	// Test enabled detector
+	server := newMockLLMServer(false, 0)
+	defer server.Close()
+
+	enabledDetector, err := NewAnomalyDetector(AnomalyDetectorConfig{
+		Enabled:      true,
+		LLMServerURL: server.URL,
+		LLMTimeout:   5 * time.Second,
+		QueueConfig: queue.QueueConfig{
+			BufferSize:  100,
+			WorkerCount: 2,
+		},
+	}, exportQueue)
+	if err != nil {
+		t.Fatalf("Failed to create enabled detector: %v", err)
+	}
+	if !enabledDetector.IsEnabled() {
+		t.Error("Expected detector to be enabled, but IsEnabled() returned false")
+	}
+	if !enabledDetector.enabled {
+		t.Error("Expected detector.enabled to be true, but got false")
+	}
+
+	// Verify that enabled detector can actually enqueue batches
+	batch := &models.BatchUeTrafficRecords{
+		Records: []*models.UeTrafficRecord{
+			{
+				UeIp: "60.60.0.1",
+				Supi: "imsi-208930000000001",
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:   5.0,
+					AvgLen:   500.0,
+					TcpRatio: 0.8,
+				},
+			},
+		},
+		BatchSize: 1,
+	}
+
+	// Start the detector to enable queueing
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := exportQueue.Start(ctx); err != nil {
+		t.Fatalf("Failed to start export queue: %v", err)
+	}
+	defer exportQueue.Stop(2 * time.Second)
+
+	if err := enabledDetector.Start(ctx); err != nil {
+		t.Fatalf("Failed to start enabled detector: %v", err)
+	}
+	defer enabledDetector.Stop(2 * time.Second)
+
+	// This should succeed because detector is enabled
+	err = enabledDetector.EnqueueBatch(batch)
+	if err != nil {
+		t.Errorf("Expected enabled detector to enqueue batch successfully, got error: %v", err)
+	}
+}

@@ -75,6 +75,9 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 		includeGlobalContext: cfg.IncludeGlobalContext,
 		exportQueue:          exportQueue,
 		riskScoringEnabled:   false,
+		enabled:              true,
+		stopChan:             make(chan struct{}),
+		doneChan:             make(chan struct{}),
 	}
 
 	// Initialize risk scorer if configuration provided
