@@ -349,6 +349,7 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 		MaxTokens:            a.cfg.GetAnomalyDetectionMaxTokens(),
 		IncludeGlobalContext: a.cfg.GetAnomalyDetectionIncludeGlobalContext(),
 		QueueConfig:          queue.DefaultQueueConfig(),
+		RiskScorerConfig:     a.cfg.GetRiskScorerConfig(),
 	}
 
 	var err error

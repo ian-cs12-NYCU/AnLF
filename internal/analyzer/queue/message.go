@@ -12,6 +12,8 @@ const (
 	MessageTypeBatchTrafficRecords MessageType = "batch_traffic_records"
 	// MessageTypeInferenceResult for LLM inference results export
 	MessageTypeInferenceResult MessageType = "inference_result"
+	// MessageTypeEnhancedInferenceResult for LLM + Risk Scorer results export
+	MessageTypeEnhancedInferenceResult MessageType = "enhanced_inference_result"
 )
 
 // ExportMessage is a generic message wrapper for different export types
@@ -59,5 +61,19 @@ func NewInferenceResultMessage(result *models.InferenceResult) *ExportMessage {
 // AsInferenceResult safely converts message data to InferenceResult
 func (m *ExportMessage) AsInferenceResult() (*models.InferenceResult, bool) {
 	result, ok := m.Data.(*models.InferenceResult)
+	return result, ok
+}
+
+// NewEnhancedInferenceResultMessage creates an export message for enhanced inference result
+func NewEnhancedInferenceResultMessage(result *models.EnhancedInferenceResult) *ExportMessage {
+	return &ExportMessage{
+		Type: MessageTypeEnhancedInferenceResult,
+		Data: result,
+	}
+}
+
+// AsEnhancedInferenceResult safely converts message data to EnhancedInferenceResult
+func (m *ExportMessage) AsEnhancedInferenceResult() (*models.EnhancedInferenceResult, bool) {
+	result, ok := m.Data.(*models.EnhancedInferenceResult)
 	return result, ok
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/free5gc/anlf/internal/analyzer/queue"
+	"github.com/free5gc/anlf/internal/analyzer/scorer"
 	"github.com/free5gc/anlf/internal/logger"
 	"github.com/free5gc/anlf/pkg/models"
 )
@@ -15,11 +16,13 @@ type AnomalyDetector struct {
 	inferenceQueue       *queue.InferenceQueue
 	exportQueue          *queue.ExportQueue
 	llmClient            *LLMClient
-	llmTimeout           time.Duration // Store timeout for diagnostics
-	includeGlobalContext bool          // Whether to include global network stats in prompts
+	riskScorer           *scorer.RiskScorer // Risk scoring component
+	llmTimeout           time.Duration      // Store timeout for diagnostics
+	includeGlobalContext bool               // Whether to include global network stats in prompts
 	stopChan             chan struct{}
 	doneChan             chan struct{}
 	enabled              bool
+	riskScoringEnabled   bool // Whether risk scoring is enabled
 }
 
 // isEmptyRecord checks if a UE traffic record has all feature values set to zero
@@ -39,10 +42,11 @@ func isEmptyRecord(record *models.UeTrafficRecord) bool {
 type AnomalyDetectorConfig struct {
 	LLMServerURL         string
 	LLMTimeout           time.Duration
-	SystemPromptPath     string  // Path to system prompt file
-	Temperature          float64 // LLM temperature
-	MaxTokens            int     // Max response tokens
-	IncludeGlobalContext bool    // Include global network statistics in prompt
+	SystemPromptPath     string                   // Path to system prompt file
+	Temperature          float64                  // LLM temperature
+	MaxTokens            int                      // Max response tokens
+	IncludeGlobalContext bool                     // Include global network statistics in prompt
+	RiskScorerConfig     *scorer.RiskScorerConfig // Risk scorer configuration (optional)
 	QueueConfig          queue.QueueConfig
 	Enabled              bool
 }
@@ -70,9 +74,16 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 		llmTimeout:           cfg.LLMTimeout,
 		includeGlobalContext: cfg.IncludeGlobalContext,
 		exportQueue:          exportQueue,
-		stopChan:             make(chan struct{}),
-		doneChan:             make(chan struct{}),
-		enabled:              true,
+		riskScoringEnabled:   false,
+	}
+
+	// Initialize risk scorer if configuration provided
+	if cfg.RiskScorerConfig != nil {
+		detector.riskScorer = scorer.NewRiskScorer(cfg.RiskScorerConfig)
+		detector.riskScoringEnabled = true
+		logger.AnalyzerLog.Info("AnomalyDetector: Risk scoring enabled")
+	} else {
+		logger.AnalyzerLog.Info("AnomalyDetector: Risk scoring disabled")
 	}
 
 	detector.inferenceQueue = queue.NewInferenceQueue(cfg.QueueConfig, detector)
@@ -202,14 +213,30 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 	// Sort results by SUPI to maintain consistent order
 	d.sortResultsBySUPI(allResults)
 
-	// Enqueue sorted results to ExportQueue
-	for _, result := range allResults {
-		msg := queue.NewInferenceResultMessage(result)
-		if err := d.exportQueue.EnqueueExport(msg); err != nil {
-			logger.AnalyzerLog.Errorf("%s [AnomalyDetector] Failed to enqueue inference result for %s: %v", logPrefix, result.Supi, err)
-		} else {
-			logger.AnalyzerLog.Debugf("%s [AnomalyDetector] Analysis complete - SUPI: %s | Anomaly Score: %.3f",
-				logPrefix, result.Supi, result.AnomalyScore)
+	// Process results through risk scorer if enabled
+	if d.riskScoringEnabled && d.riskScorer != nil {
+		enhancedResults := d.riskScorer.ProcessInferenceResults(allResults, pollID)
+
+		// Enqueue enhanced results to ExportQueue
+		for _, enhanced := range enhancedResults {
+			msg := queue.NewEnhancedInferenceResultMessage(enhanced)
+			if err := d.exportQueue.EnqueueExport(msg); err != nil {
+				logger.AnalyzerLog.Errorf("%s [AnomalyDetector] Failed to enqueue enhanced result for %s: %v", logPrefix, enhanced.Supi, err)
+			} else {
+				logger.AnalyzerLog.Debugf("%s [AnomalyDetector] Enhanced analysis - SUPI: %s | LLM: %.3f | Risk: %.2f | Status: %s",
+					logPrefix, enhanced.Supi, enhanced.AnomalyScore, enhanced.RiskScore, enhanced.Status)
+			}
+		}
+	} else {
+		// Enqueue raw results without risk scoring (legacy mode)
+		for _, result := range allResults {
+			msg := queue.NewInferenceResultMessage(result)
+			if err := d.exportQueue.EnqueueExport(msg); err != nil {
+				logger.AnalyzerLog.Errorf("%s [AnomalyDetector] Failed to enqueue inference result for %s: %v", logPrefix, result.Supi, err)
+			} else {
+				logger.AnalyzerLog.Debugf("%s [AnomalyDetector] Analysis complete - SUPI: %s | Anomaly Score: %.3f",
+					logPrefix, result.Supi, result.AnomalyScore)
+			}
 		}
 	}
 

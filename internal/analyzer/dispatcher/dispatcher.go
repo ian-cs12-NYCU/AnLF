@@ -33,6 +33,8 @@ func (d *ExportDispatcher) Handle(msg *queue.ExportMessage) error {
 		return d.handleBatchTrafficRecords(msg)
 	case queue.MessageTypeInferenceResult:
 		return d.handleInferenceResult(msg)
+	case queue.MessageTypeEnhancedInferenceResult:
+		return d.handleEnhancedInferenceResult(msg)
 	default:
 		return fmt.Errorf("unknown message type: %s", msg.Type)
 	}
@@ -84,6 +86,25 @@ func (d *ExportDispatcher) handleInferenceResult(msg *queue.ExportMessage) error
 
 	logger.AnalyzerLog.Debugf("Exported inference result for SUPI %s: score %.3f via %s",
 		result.Supi, result.AnomalyScore, d.inferenceExporter.Name())
+	return nil
+}
+
+func (d *ExportDispatcher) handleEnhancedInferenceResult(msg *queue.ExportMessage) error {
+	result, ok := msg.AsEnhancedInferenceResult()
+	if !ok {
+		return fmt.Errorf("failed to convert message to enhanced inference result")
+	}
+
+	if d.inferenceExporter == nil {
+		return nil
+	}
+
+	if err := d.inferenceExporter.Export(result); err != nil {
+		return fmt.Errorf("inference exporter failed: %w", err)
+	}
+
+	logger.AnalyzerLog.Debugf("Exported enhanced inference result for SUPI %s: LLM=%.3f, Risk=%.2f, Status=%s via %s",
+		result.Supi, result.AnomalyScore, result.RiskScore, result.Status, d.inferenceExporter.Name())
 	return nil
 }
 

@@ -42,9 +42,9 @@ func NewInferenceResultExporter(baseDir string) (*InferenceResultExporter, error
 		writer: writer,
 	}
 
-	// Write header (simplified format)
+	// Write header (enhanced format with risk scoring)
 	header := []string{
-		"supi", "anomaly_score",
+		"supi", "anomaly_score", "risk_score", "status", "is_blocked", "attack_detected",
 	}
 	if err := writer.Write(header); err != nil {
 		file.Close()
@@ -56,19 +56,37 @@ func NewInferenceResultExporter(baseDir string) (*InferenceResultExporter, error
 	return exporter, nil
 }
 
-// Export writes an InferenceResult to CSV file
+// Export writes an InferenceResult or EnhancedInferenceResult to CSV file
 func (e *InferenceResultExporter) Export(data interface{}) error {
-	result, ok := data.(*models.InferenceResult)
-	if !ok {
-		return fmt.Errorf("invalid data type, expected *models.InferenceResult")
-	}
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	row := []string{
-		result.Supi,
-		fmt.Sprintf("%.3f", result.AnomalyScore),
+	var row []string
+
+	// Support both InferenceResult and EnhancedInferenceResult
+	switch result := data.(type) {
+	case *models.EnhancedInferenceResult:
+		// Enhanced result with risk scoring
+		row = []string{
+			result.Supi,
+			fmt.Sprintf("%.3f", result.AnomalyScore),
+			fmt.Sprintf("%.2f", result.RiskScore),
+			result.Status,
+			fmt.Sprintf("%t", result.IsBlocked),
+			fmt.Sprintf("%t", result.AttackDetected),
+		}
+	case *models.InferenceResult:
+		// Legacy result (without risk scoring)
+		row = []string{
+			result.Supi,
+			fmt.Sprintf("%.3f", result.AnomalyScore),
+			"0.00",   // Default risk score
+			"NORMAL", // Default status
+			"false",  // Default not blocked
+			"false",  // Default no attack
+		}
+	default:
+		return fmt.Errorf("invalid data type, expected *models.InferenceResult or *models.EnhancedInferenceResult")
 	}
 
 	if err := e.writer.Write(row); err != nil {

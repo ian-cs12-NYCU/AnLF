@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/free5gc/anlf/internal/analyzer/scorer"
 	"github.com/free5gc/anlf/internal/logger"
 	"github.com/free5gc/openapi/models"
 )
@@ -68,14 +69,24 @@ type Smf struct {
 }
 
 type AnomalyDetection struct {
-	Enable               bool    `yaml:"enable" valid:"type(bool)"`
-	ServerURL            string  `yaml:"serverUrl" valid:"url,optional"`
-	Timeout              int     `yaml:"timeout" valid:"type(int),optional"`               // in seconds
-	SystemPromptPath     string  `yaml:"systemPromptPath" valid:"type(string),optional"`   // path to system prompt file
-	BatchSize            int     `yaml:"batchSize" valid:"type(int),optional"`             // optimal batch size for LLM (5-10 UEs recommended)
-	Temperature          float64 `yaml:"temperature" valid:"type(float64),optional"`       // LLM temperature (0.0-2.0, default: 0.1)
-	MaxTokens            int     `yaml:"maxTokens" valid:"type(int),optional"`             // Max response tokens (default: 50)
-	IncludeGlobalContext bool    `yaml:"includeGlobalContext" valid:"type(bool),optional"` // Include global network statistics in prompt
+	Enable               bool         `yaml:"enable" valid:"type(bool)"`
+	ServerURL            string       `yaml:"serverUrl" valid:"url,optional"`
+	Timeout              int          `yaml:"timeout" valid:"type(int),optional"`               // in seconds
+	SystemPromptPath     string       `yaml:"systemPromptPath" valid:"type(string),optional"`   // path to system prompt file
+	BatchSize            int          `yaml:"batchSize" valid:"type(int),optional"`             // optimal batch size for LLM (5-10 UEs recommended)
+	Temperature          float64      `yaml:"temperature" valid:"type(float64),optional"`       // LLM temperature (0.0-2.0, default: 0.1)
+	MaxTokens            int          `yaml:"maxTokens" valid:"type(int),optional"`             // Max response tokens (default: 50)
+	IncludeGlobalContext bool         `yaml:"includeGlobalContext" valid:"type(bool),optional"` // Include global network statistics in prompt
+	RiskScoring          *RiskScoring `yaml:"riskScoring,omitempty" valid:"optional"`           // Risk scoring configuration
+}
+
+type RiskScoring struct {
+	Enable              bool    `yaml:"enable" valid:"type(bool)"`                          // Enable risk scoring (CUSUM-based)
+	LLMConfidenceCutoff float64 `yaml:"llmConfidenceCutoff" valid:"type(float64),optional"` // LLM confidence threshold (0.7)
+	HitsToBan           int     `yaml:"hitsToBan" valid:"type(int),optional"`               // Number of attacks to trigger block (2)
+	SecondsToForgive    int     `yaml:"secondsToForgive" valid:"type(int),optional"`        // Time to decay to zero (20)
+	BlockThreshold      float64 `yaml:"blockThreshold" valid:"type(float64),optional"`      // Score threshold to block (80.0)
+	UnblockThreshold    float64 `yaml:"unblockThreshold" valid:"type(float64),optional"`    // Score threshold to unblock (50.0)
 }
 
 type Logger struct {
@@ -423,4 +434,48 @@ func (c *Config) GetAnomalyDetectionIncludeGlobalContext() bool {
 	c.RLock()
 	defer c.RUnlock()
 	return c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.IncludeGlobalContext
+}
+
+func (c *Config) GetRiskScorerConfig() *scorer.RiskScorerConfig {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.Configuration == nil || c.Configuration.AnomalyDetection == nil {
+		return nil
+	}
+
+	rsCfg := c.Configuration.AnomalyDetection.RiskScoring
+	if rsCfg == nil || !rsCfg.Enable {
+		return nil
+	}
+
+	// Build scorer config with defaults
+	config := &scorer.RiskScorerConfig{
+		MaxScore:            100.0,
+		BlockThreshold:      80.0,
+		UnblockThreshold:    50.0,
+		LLMConfidenceCutoff: 0.7,
+		HitsToBan:           2,
+		SecondsToForgive:    20,
+		TimeWindowSec:       1,
+	}
+
+	// Override with configured values if provided
+	if rsCfg.LLMConfidenceCutoff > 0 {
+		config.LLMConfidenceCutoff = rsCfg.LLMConfidenceCutoff
+	}
+	if rsCfg.HitsToBan > 0 {
+		config.HitsToBan = rsCfg.HitsToBan
+	}
+	if rsCfg.SecondsToForgive > 0 {
+		config.SecondsToForgive = rsCfg.SecondsToForgive
+	}
+	if rsCfg.BlockThreshold > 0 {
+		config.BlockThreshold = rsCfg.BlockThreshold
+	}
+	if rsCfg.UnblockThreshold > 0 {
+		config.UnblockThreshold = rsCfg.UnblockThreshold
+	}
+
+	return config
 }
