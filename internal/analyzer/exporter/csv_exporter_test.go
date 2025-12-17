@@ -37,9 +37,12 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 			NewFlowRate: 0.5,
 			FanOut:      0.3,
 		},
-		Timestamp: time.Now().Unix(),
-		Supi:      "imsi-208930000000001",
-		UeIp:      "10.60.100.1",
+		Timestamp:         time.Now().Unix(),
+		Supi:              "imsi-208930000000001",
+		UeIp:              "10.60.100.1",
+		GlobalAvgPPS:      3.0,
+		GlobalAvgFlowRate: 0.4,
+		GlobalAvgLen:      450.0,
 	}
 
 	if err := exp.Export(rec); err != nil {
@@ -81,6 +84,9 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 	if !strings.Contains(lines[0], "timestamp") || !strings.Contains(lines[0], "supi") {
 		t.Errorf("Header missing expected columns: %s", lines[0])
 	}
+	if !strings.Contains(lines[0], "global_avg_pps") || !strings.Contains(lines[0], "global_avg_flow_rate") || !strings.Contains(lines[0], "global_avg_len") {
+		t.Errorf("Header missing global statistics columns: %s", lines[0])
+	}
 
 	// Check data row contains expected values
 	if !strings.Contains(lines[1], "imsi-208930000000001") {
@@ -88,5 +94,8 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "10.60.100.1") {
 		t.Errorf("Data row missing UE IP: %s", lines[1])
+	}
+	if !strings.Contains(lines[1], "3.0000") {
+		t.Errorf("Data row missing global_avg_pps value: %s", lines[1])
 	}
 }

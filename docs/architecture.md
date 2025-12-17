@@ -431,6 +431,51 @@ graph TB
     style LLM fill:#ffaaaa
 ```
 
+## 6.1 CSV 輸出格式 ✨ **更新 (2025-12-17)**
+
+### Traffic CSV 格式
+CsvExporter 輸出的 traffic_*.csv 檔案包含以下欄位：
+
+```csv
+timestamp,supi,ue_ip,log_pps,avg_len,tcp_ratio,udp_ratio,icmp_ratio,syn_ratio,rst_ratio,new_flow_rate,fan_out,global_avg_pps,global_avg_flow_rate,global_avg_len
+1734417600,imsi-001010000000001,60.60.0.1,4.523,1480.5,0.85,0.15,0.0,0.12,0.03,350.2,45,3.845,285.6,1200.3
+1734417600,imsi-001010000000002,60.60.0.2,3.201,850.0,0.92,0.08,0.0,0.08,0.01,120.5,12,3.845,285.6,1200.3
+```
+
+### 欄位說明
+
+#### UE 識別欄位
+- **timestamp**: Unix 時戳 (秒)
+- **supi**: UE 識別碼 (例如: imsi-001010000000001)
+- **ue_ip**: UE IP 地址 (例如: 60.60.0.1)
+
+#### UE 個別特徵欄位
+- **log_pps**: Log10(Packets Per Second + 1) - 流量規模
+- **avg_len**: 平均封包大小 (bytes)
+- **tcp_ratio**: TCP 封包比例 (0.0-1.0)
+- **udp_ratio**: UDP 封包比例 (0.0-1.0)
+- **icmp_ratio**: ICMP 封包比例 (0.0-1.0)
+- **syn_ratio**: TCP SYN 旗標比例 (0.0-1.0)
+- **rst_ratio**: TCP RST 旗標比例 (0.0-1.0)
+- **new_flow_rate**: 新連線率 (connections/sec)
+- **fan_out**: 目標地址分散度 (0-256)
+
+#### 全域統計欄位 ✨ **新增 (2025-12-17)**
+- **global_avg_pps**: 全域平均 Log10(PPS) - 該批次所有活躍 UE 的平均值
+- **global_avg_flow_rate**: 全域平均新連線率 - 該批次所有活躍 UE 的平均值
+- **global_avg_len**: 全域平均封包大小 - 該批次所有活躍 UE 的平均值
+
+### 全域統計計算規則
+- 在每個 Poll 週期，FlowAnalyzer 計算所有**活躍** UE (packet_count > 0) 的平均值
+- 同一批次的所有 UE 記錄共用相同的全域統計數據
+- 全域統計數據會填充到每一條 UeTrafficRecord 中
+- 如果某批次無活躍 UE，則全域統計欄位為 0.0
+
+### 輸出特性
+- **排序**: 記錄按 SUPI 字母順序排序輸出
+- **批次寫入**: 每個 Poll 週期的所有 UE 資料一次性寫入
+- **檔案命名**: `output/YYYYMMDD_HHMMSS/traffic_YYYYMMDD_HHMMSS.csv`
+
 ## 7. NWDAF 資料流 (NWDAF Data Flow)
 
 ```mermaid
@@ -529,6 +574,11 @@ type UeTrafficRecord struct {
     RstRatio    float64 // TCP RST ratio
     NewFlowRate float64 // New flows per second
     FanOut      float64 // Destination diversity (0-256)
+    
+    // Global network statistics (for context) ✨ 新增 (2025-12-17)
+    GlobalAvgPPS      float64 // 全域平均 Log10(PPS)
+    GlobalAvgFlowRate float64 // 全域平均新連線率
+    GlobalAvgLen      float64 // 全域平均封包大小
 }
 ```
 

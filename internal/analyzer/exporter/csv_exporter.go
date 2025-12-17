@@ -48,6 +48,7 @@ func NewCsvExporter(baseDir string) (*CsvExporter, error) {
 		"timestamp", "supi", "ue_ip",
 		"log_pps", "avg_len_bytes", "tcp_ratio", "udp_ratio", "icmp_ratio",
 		"syn_ratio", "rst_ratio", "new_flow_rate", "fan_out",
+		"global_avg_pps", "global_avg_flow_rate", "global_avg_len",
 	}
 	if err := writer.Write(header); err != nil {
 		file.Close()
@@ -118,6 +119,9 @@ func (e *CsvExporter) exportRecord(rec *models.UeTrafficRecord) error {
 		fmt.Sprintf("%.4f", rec.RstRatio),
 		fmt.Sprintf("%.4f", rec.NewFlowRate),
 		fmt.Sprintf("%.4f", rec.FanOut),
+		fmt.Sprintf("%.4f", rec.GlobalAvgPPS),
+		fmt.Sprintf("%.4f", rec.GlobalAvgFlowRate),
+		fmt.Sprintf("%.4f", rec.GlobalAvgLen),
 	}
 
 	if err := e.writer.Write(row); err != nil {

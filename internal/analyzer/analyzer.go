@@ -120,9 +120,15 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 		}
 	}
 
-	// Assign poll ID to each record (for logging in anomaly detector)
+	// Assign poll ID and global stats to each record
 	for _, record := range batch.Records {
 		record.PollID = batch.PollID
+		// Fill in global statistics from batch to each record for CSV export
+		if batch.GlobalStats != nil {
+			record.GlobalAvgPPS = batch.GlobalStats.AvgLogPPS
+			record.GlobalAvgFlowRate = batch.GlobalStats.AvgFlowRate
+			record.GlobalAvgLen = batch.GlobalStats.AvgLen
+		}
 		logger.AnalyzerLog.Debugf("[Poll #%d] Received traffic record for UE %s (SUPI: %s)", batch.PollID, record.UeIp, record.Supi)
 	}
 

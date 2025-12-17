@@ -261,3 +261,75 @@ func TestFlowAnalyzer_GlobalStats_AllActiveUsers(t *testing.T) {
 		t.Fatalf("Failed to stop analyzer: %v", err)
 	}
 }
+
+func TestFlowAnalyzer_RecordGlobalStatsPopulation(t *testing.T) {
+	mockHandler := &MockExportHandler{}
+	exportQueue := queue.NewExportQueue(queue.QueueConfig{
+		BufferSize:  100,
+		WorkerCount: 2,
+	}, mockHandler)
+
+	detector := &MockAnomalyDetector{enabled: false}
+	featureChan := make(chan *models.BatchUeTrafficRecords, 10)
+	analyzer := NewFlowAnalyzer(featureChan, exportQueue, detector)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := analyzer.Start(ctx); err != nil {
+		t.Fatalf("Failed to start analyzer: %v", err)
+	}
+
+	// Create batch with active UEs
+	batch := &models.BatchUeTrafficRecords{
+		Records: []*models.UeTrafficRecord{
+			{
+				UeIp: "60.60.0.1",
+				Supi: "imsi-001010000000001",
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      4.0,
+					AvgLen:      800.0,
+					NewFlowRate: 0.2,
+				},
+			},
+			{
+				UeIp: "60.60.0.2",
+				Supi: "imsi-001010000000002",
+				UeFeatureVector: models.UeFeatureVector{
+					LogPPS:      2.0,
+					AvgLen:      400.0,
+					NewFlowRate: 0.1,
+				},
+			},
+		},
+		BatchSize: 2,
+	}
+
+	featureChan <- batch
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify that each record has global stats populated
+	expectedAvgPPS := (4.0 + 2.0) / 2.0     // Should be 3.0
+	expectedAvgFlow := (0.2 + 0.1) / 2.0    // Should be 0.15
+	expectedAvgLen := (800.0 + 400.0) / 2.0 // Should be 600.0
+
+	for i, record := range batch.Records {
+		if math.Abs(record.GlobalAvgPPS-expectedAvgPPS) > floatTolerance {
+			t.Errorf("Record %d: Expected GlobalAvgPPS %.2f, got %.2f", i, expectedAvgPPS, record.GlobalAvgPPS)
+		}
+
+		if math.Abs(record.GlobalAvgFlowRate-expectedAvgFlow) > floatTolerance {
+			t.Errorf("Record %d: Expected GlobalAvgFlowRate %.2f, got %.2f", i, expectedAvgFlow, record.GlobalAvgFlowRate)
+		}
+
+		if math.Abs(record.GlobalAvgLen-expectedAvgLen) > floatTolerance {
+			t.Errorf("Record %d: Expected GlobalAvgLen %.0f, got %.0f", i, expectedAvgLen, record.GlobalAvgLen)
+		}
+	}
+
+	t.Log("✓ Global stats correctly populated in each record")
+
+	if err := analyzer.Stop(2 * time.Second); err != nil {
+		t.Fatalf("Failed to stop analyzer: %v", err)
+	}
+}

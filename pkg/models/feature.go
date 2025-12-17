@@ -22,6 +22,11 @@ type UeTrafficRecord struct {
 	Supi      string `json:"supi" csv:"supi"`
 	UeIp      string `json:"ip" csv:"ue_ip"`
 	PollID    uint64 `json:"-" csv:"-"` // Poll sequence number (for logging only, not exported)
+
+	// Global network statistics for this batch window
+	GlobalAvgPPS      float64 `json:"global_avg_pps" csv:"global_avg_pps"`
+	GlobalAvgFlowRate float64 `json:"global_avg_flow_rate" csv:"global_avg_flow_rate"`
+	GlobalAvgLen      float64 `json:"global_avg_len" csv:"global_avg_len"`
 }
 
 // GlobalNetworkStats represents aggregated statistics across all UEs in a batch
