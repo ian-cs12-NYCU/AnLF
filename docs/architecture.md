@@ -876,12 +876,12 @@ Global Network Context (Current Window):
 Input Field Definitions:
 ...
 
-User Data: ID:{supi}, PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}
+User Data: PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}
 ```
 
 **支援的佔位符:**
 - **全域統計:** `{global_avg_pps}`, `{global_avg_flow}`, `{global_avg_len}`
-- **UE 特定:** `{supi}`, `{log_pps}`, `{avg_len}`, `{flow_rate}`, `{fan_out}`, `{tcp_ratio}`, `{syn_ratio}`, `{rst_ratio}`
+- **UE 特定:** `{log_pps}`, `{avg_len}`, `{flow_rate}`, `{fan_out}`, `{tcp_ratio}`, `{syn_ratio}`, `{rst_ratio}`
 
 **運行時替換示例:**
 ```
@@ -890,7 +890,7 @@ Global Network Context (Current Window):
 - Global Avg Flow Rate: 0.30
 - Global Avg Packet Size: 650
 
-User Data: ID:imsi-2089300000000001, PPS:5.0, Len:512, Flow:0.90, Fan:5, TCP:0.6, SYN:0.1, RST:0.0
+User Data: PPS:5.0, Len:512, Flow:0.90, Fan:5, TCP:0.6, SYN:0.1, RST:0.0
 ```
 
 **特性:**
@@ -926,7 +926,7 @@ User Data: ID:imsi-2089300000000001, PPS:5.0, Len:512, Flow:0.90, Fan:5, TCP:0.6
             │   ├─→ For Each UE: Spawn Goroutine
             │   │   ├─→ [LLMClient.PredictSingleUE(ctx, ue)]
             │   │   │   └─→ POST http://127.0.0.1:5001/v1/chat/completions
-            │   │   │       (Key-Value Format: ID:xxx, PPS:x.x, Len:xxx, ...)
+            │   │   │       (Key-Value Format: PPS:x.x, Len:xxx, ...)
             │   │   │       ↓
             │   │   │   [LLM Server] (每UE一個請求)
             │   │   │       ↓

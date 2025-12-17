@@ -46,8 +46,8 @@ func TestLLMClient_PredictSingleUE_Success(t *testing.T) {
 			return
 		}
 
-		// Verify template-based format: "User Data: ID:xxx, PPS:x.x, ..."
-		if !strings.Contains(content, "User Data: ID:") {
+		// Verify template-based format: "User Data: PPS:x.x, ..."
+		if !strings.Contains(content, "User Data: PPS:") {
 			t.Errorf("Expected template-based format with 'User Data:', got: %s", content)
 		}
 

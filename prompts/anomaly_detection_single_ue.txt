@@ -7,7 +7,6 @@ Global Network Context (Current Window):
 - Global Avg Packet Size: {global_avg_len}
 
 Input Field Definitions:
-- ID: SUPI (Subscriber ID) - Unique identifier for the UE
 - PPS: Log10(Packets Per Second) - Traffic volume scale (0=1pps, 4=10Kpps, 5=100Kpps)
 - Len: Average Packet Size in bytes - Small packets (<100) may indicate attack
 - Flow: New Connection Rate (0.0-1.0) - High values (>0.8) suggest random port scanning
@@ -26,4 +25,4 @@ Detection Rules:
 Task: Output ONLY a risk score between 0.0 (Safe) and 1.0 (Critical Attack).
 Format: Risk Score: X.X
 
-User Data: ID:{supi}, PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}
+User Data: PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}

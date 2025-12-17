@@ -91,7 +91,7 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 
 // BuildSingleUEPrompt builds prompt for a single UE with template variable replacement
 // Supports placeholders: {global_avg_pps}, {global_avg_flow}, {global_avg_len},
-// {supi}, {log_pps}, {avg_len}, {flow_rate}, {fan_out}, {tcp_ratio}, {syn_ratio}, {rst_ratio}
+// {log_pps}, {avg_len}, {flow_rate}, {fan_out}, {tcp_ratio}, {syn_ratio}, {rst_ratio}
 func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalStats *models.GlobalNetworkStats) (systemContent string, userContent string) {
 	systemContent = c.systemPrompt
 
@@ -132,11 +132,10 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 		userContent = userDataTemplate
 	} else {
 		// Fallback: simple key-value format
-		userContent = "User Data: ID:{supi}, PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}"
+		userContent = "User Data: PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}"
 	}
 
 	// Replace UE-specific placeholders
-	userContent = replacePlaceholder(userContent, "supi", record.Supi)
 	userContent = replacePlaceholder(userContent, "log_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.LogPPS))
 	userContent = replacePlaceholder(userContent, "avg_len", fmt.Sprintf("%d", int(record.UeFeatureVector.AvgLen)))
 	userContent = replacePlaceholder(userContent, "flow_rate", fmt.Sprintf("%.2f", record.UeFeatureVector.NewFlowRate))
