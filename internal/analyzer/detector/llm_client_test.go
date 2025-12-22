@@ -80,7 +80,7 @@ func TestLLMClient_PredictSingleUE_Success(t *testing.T) {
 			LogPPS:      3.5,
 			AvgLen:      600,
 			NewFlowRate: 0.1,
-			FanOut:      5,
+			FanOut:      0.5,
 			TcpRatio:    0.9,
 			SynRatio:    0.1,
 			RstRatio:    0.01,

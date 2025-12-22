@@ -74,15 +74,15 @@ func generateSampleRecord() *models.UeTrafficRecord {
 		Timestamp: 1734350400,
 		UeIp:      "10.60.0.1",
 		UeFeatureVector: models.UeFeatureVector{
-			LogPPS:      5.0, // High PPS (potential attack)
-			AvgLen:      512.0,
-			IcmpRatio:   0.01,
-			TcpRatio:    0.6,
-			UdpRatio:    0.39,
-			SynRatio:    0.1,
-			RstRatio:    0.01,
-			NewFlowRate: 0.9, // High flow rate
-			FanOut:      5.0,
+			LogPPS:      5.0,   // High PPS: log10(100k) = 5.0 (potential attack)
+			AvgLen:      512.0, // Medium packet size
+			IcmpRatio:   0.01,  // Low ICMP ratio
+			TcpRatio:    0.6,   // 60% TCP
+			UdpRatio:    0.39,  // 39% UDP
+			SynRatio:    0.1,   // 10% SYN (moderate)
+			RstRatio:    0.01,  // 1% RST
+			NewFlowRate: 0.9,   // High flow rate (90% are new flows - attack indicator)
+			FanOut:      0.78,  // High fan-out: 50/64 targets (carpet bombing indicator)
 		},
 	}
 }

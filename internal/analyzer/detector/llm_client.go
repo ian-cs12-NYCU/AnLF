@@ -139,10 +139,10 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 	userContent = replacePlaceholder(userContent, "log_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.LogPPS))
 	userContent = replacePlaceholder(userContent, "avg_len", fmt.Sprintf("%d", int(record.UeFeatureVector.AvgLen)))
 	userContent = replacePlaceholder(userContent, "flow_rate", fmt.Sprintf("%.2f", record.UeFeatureVector.NewFlowRate))
-	userContent = replacePlaceholder(userContent, "fan_out", fmt.Sprintf("%d", int(record.UeFeatureVector.FanOut)))
-	userContent = replacePlaceholder(userContent, "tcp_ratio", fmt.Sprintf("%.1f", record.UeFeatureVector.TcpRatio))
-	userContent = replacePlaceholder(userContent, "syn_ratio", fmt.Sprintf("%.1f", record.UeFeatureVector.SynRatio))
-	userContent = replacePlaceholder(userContent, "rst_ratio", fmt.Sprintf("%.1f", record.UeFeatureVector.RstRatio))
+	userContent = replacePlaceholder(userContent, "fan_out", fmt.Sprintf("%.2f", record.UeFeatureVector.FanOut))
+	userContent = replacePlaceholder(userContent, "tcp_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.TcpRatio))
+	userContent = replacePlaceholder(userContent, "syn_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.SynRatio))
+	userContent = replacePlaceholder(userContent, "rst_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.RstRatio))
 
 	return systemContent, userContent
 }

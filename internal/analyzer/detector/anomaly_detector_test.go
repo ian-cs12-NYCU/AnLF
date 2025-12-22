@@ -406,7 +406,7 @@ func TestAnomalyDetector_EmptyRecords(t *testing.T) {
 					SynRatio:    0.1,
 					RstRatio:    0.01,
 					NewFlowRate: 0.5,
-					FanOut:      3.0,
+					FanOut:      0.3,
 				},
 			},
 			// Another empty record - should skip LLM request
@@ -523,7 +523,7 @@ func TestIsEmptyRecord(t *testing.T) {
 					SynRatio:    0.1,
 					RstRatio:    0.01,
 					NewFlowRate: 0.5,
-					FanOut:      3.0,
+					FanOut:      0.3,
 				},
 			},
 			expected: false,
