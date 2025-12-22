@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 
 struct ue_metrics_t {
+    // Uplink metrics
     __u64 packet_count;
     __u64 byte_count;
     
@@ -17,6 +18,13 @@ struct ue_metrics_t {
     __u64 new_flow_count;
     
     __u64 dst_bitmap;
+    
+    // Downlink metrics
+    __u64 dl_packet_count;
+    __u64 dl_byte_count;
+    
+    __u64 dl_tcp_count;
+    __u64 dl_ack_count;  // TCP ACK packets in downlink
 };
 
 // Flow tracking key (5-tuple for TCP/UDP flows)

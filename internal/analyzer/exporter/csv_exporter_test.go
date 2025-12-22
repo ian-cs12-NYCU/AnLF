@@ -27,6 +27,7 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 	// Export test record
 	rec := &models.UeTrafficRecord{
 		UeFeatureVector: models.UeFeatureVector{
+			// Uplink features
 			LogPPS:      2.0,
 			AvgLen:      500.0,
 			TcpRatio:    0.8,
@@ -36,6 +37,12 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 			RstRatio:    0.01,
 			NewFlowRate: 0.5,
 			FanOut:      0.3,
+			// Downlink features
+			DlPPS:     1000.0,
+			DlAvgLen:  1400.0,
+			PPSRatio:  1.5,
+			ByteRatio: 2.8,
+			AckRatio:  0.85,
 		},
 		Timestamp:         time.Now().Unix(),
 		Supi:              "imsi-208930000000001",
@@ -84,6 +91,13 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 	if !strings.Contains(lines[0], "timestamp") || !strings.Contains(lines[0], "supi") {
 		t.Errorf("Header missing expected columns: %s", lines[0])
 	}
+	// Check downlink features in header
+	if !strings.Contains(lines[0], "dl_pps") || !strings.Contains(lines[0], "dl_avg_len") {
+		t.Errorf("Header missing downlink feature columns: %s", lines[0])
+	}
+	if !strings.Contains(lines[0], "pps_ratio") || !strings.Contains(lines[0], "byte_ratio") || !strings.Contains(lines[0], "ack_ratio") {
+		t.Errorf("Header missing ratio columns: %s", lines[0])
+	}
 	if !strings.Contains(lines[0], "global_avg_pps") || !strings.Contains(lines[0], "global_avg_flow_rate") || !strings.Contains(lines[0], "global_avg_len") {
 		t.Errorf("Header missing global statistics columns: %s", lines[0])
 	}
@@ -94,6 +108,13 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "10.60.100.1") {
 		t.Errorf("Data row missing UE IP: %s", lines[1])
+	}
+	// Check downlink feature values
+	if !strings.Contains(lines[1], "1000.0000") { // dl_pps
+		t.Errorf("Data row missing dl_pps value: %s", lines[1])
+	}
+	if !strings.Contains(lines[1], "1.5000") { // pps_ratio
+		t.Errorf("Data row missing pps_ratio value: %s", lines[1])
 	}
 	if !strings.Contains(lines[1], "3.0000") {
 		t.Errorf("Data row missing global_avg_pps value: %s", lines[1])

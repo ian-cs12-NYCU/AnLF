@@ -74,6 +74,7 @@ func generateSampleRecord() *models.UeTrafficRecord {
 		Timestamp: 1734350400,
 		UeIp:      "10.60.0.1",
 		UeFeatureVector: models.UeFeatureVector{
+			// Uplink features
 			LogPPS:      5.0,   // High PPS: log10(100k) = 5.0 (potential attack)
 			AvgLen:      512.0, // Medium packet size
 			IcmpRatio:   0.01,  // Low ICMP ratio
@@ -83,6 +84,12 @@ func generateSampleRecord() *models.UeTrafficRecord {
 			RstRatio:    0.01,  // 1% RST
 			NewFlowRate: 0.9,   // High flow rate (90% are new flows - attack indicator)
 			FanOut:      0.78,  // High fan-out: 50/64 targets (carpet bombing indicator)
+			// Downlink features (Directional Symmetry)
+			DlPPS:     50.0,  // Low downlink packets (asymmetric - attack sign)
+			DlAvgLen:  64.0,  // Small DL packets (RST/ICMP error responses)
+			PPSRatio:  0.05,  // Very low DL/UL ratio (0.05 = attack, normal ~1.0)
+			ByteRatio: 0.006, // Extremely low byte ratio (attack pattern)
+			AckRatio:  0.1,   // Low ACK ratio (missing proper TCP responses)
 		},
 	}
 }
@@ -90,9 +97,13 @@ func generateSampleRecord() *models.UeTrafficRecord {
 func generateSampleGlobalStats() *models.GlobalNetworkStats {
 	// Generate sample global network statistics
 	return &models.GlobalNetworkStats{
-		AvgLogPPS:   3.2,   // Average log10(PPS) across all UEs
-		AvgFlowRate: 0.3,   // Average new flow rate
-		AvgLen:      650.0, // Average packet size
+		AvgLogPPS:    3.2,   // Average log10(PPS) across all UEs (uplink)
+		AvgFlowRate:  0.3,   // Average new flow rate (uplink)
+		AvgUlLen:     650.0, // Average uplink packet size
+		AvgDlPPS:     500.0, // Average downlink PPS
+		AvgDlLen:     800.0, // Average downlink packet size
+		AvgPPSRatio:  1.2,   // Average DL/UL PPS ratio
+		AvgByteRatio: 1.5,   // Average DL/UL byte ratio
 	}
 }
 

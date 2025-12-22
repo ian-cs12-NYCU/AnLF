@@ -3,7 +3,7 @@
 | 特徵變數名 (JSON) | 來源運算 (Go)                  | 預期物理意義 (給 LLM 的提示)                     | 是否核心 (Core) |
 |-------------------|--------------------------------|--------------------------------------------------|----------------|
 | log_pps           | Log10(packet_count)            | 流量大不大？(基本門檻)                           | ✅ Core        |
-| avg_len           | byte_count / packet_count      | 是小封包攻擊還是大檔案下載？                     | ✅ Core        |
+| ul_avg_len        | byte_count / packet_count      | 上行是小封包攻擊還是大檔案上傳？                 | ✅ Core        |
 | icmp_ratio        | icmp_count / packet_count      | 是不是 Ping Flood？(排除法用)                    | ⚠️ Candidate   |
 | tcp_ratio         | tcp_count / packet_count       | 攻擊是用什麼協定打的？                           | ✅ Core        |
 | udp_ratio         | udp_count / packet_count       | (同上，通常與 TCP 互補，選一個即可，但初期可都留) | ⚠️ Candidate   |
@@ -46,9 +46,9 @@
     ```
   * **數值範圍**：`0.0` \~ `7.0` (對應 10M PPS)。
 
-### 2\. 平均封包大小 (Avg\_Len)
+### 2. 上行平均封包大小 (UL_Avg_Len)
 
-  * **核心概念**：區分攻擊類型（小包洪水 vs 大包塞頻寬）。
+  * **核心概念**：區分政擊類型（小包洪水 vs 大包塞頻寬）。
   * **Go 實作公式**：
     ```go
     var avgLen float64
@@ -176,7 +176,7 @@ import (
 
 type UeFeatureVector struct {
     LogPPS    float64 `json:"log_pps"`
-    AvgLen    float64 `json:"avg_len"`
+    UlAvgLen  float64 `json:"ul_avg_len"`
     IcmpRatio float64 `json:"icmp_ratio"`
     TcpRatio  float64 `json:"tcp_ratio"`
     UdpRatio  float64 `json:"udp_ratio"`
@@ -193,9 +193,10 @@ func ConvertToFeatures(m *ue_metrics_t) UeFeatureVector {
         return UeFeatureVector{} // 全部回傳 0
     }
 
-    return UeFeatureVector{
+    // Uplink features
+    features := UeFeatureVector{
         LogPPS:    math.Log10(pktCnt),
-        AvgLen:    float64(m.ByteCount) / pktCnt,
+        UlAvgLen:  float64(m.ByteCount) / pktCnt,
         IcmpRatio: float64(m.IcmpCount) / pktCnt,
         TcpRatio:  float64(m.TcpCount) / pktCnt,
         UdpRatio:  float64(m.UdpCount) / pktCnt,
@@ -206,5 +207,152 @@ func ConvertToFeatures(m *ue_metrics_t) UeFeatureVector {
         FlowRate:  float64(m.NewFlowCount) / pktCnt,
         FanOut:    float64(bits.OnesCount64(m.DstBitmap)) / 64.0,
     }
+
+    // Downlink features (if downlink traffic exists)
+    dlPktCnt := float64(m.DlPacketCount)
+    if dlPktCnt > 0 {
+        features.DlPPS = dlPktCnt
+        features.DlAvgLen = float64(m.DlByteCount) / dlPktCnt
+        features.PPSRatio = dlPktCnt / pktCnt
+        features.ByteRatio = float64(m.DlByteCount) / float64(m.ByteCount)
+        
+        if m.DlTcpCount > 0 {
+            features.AckRatio = float64(m.DlAckCount) / float64(m.DlTcpCount)
+        }
+    }
+
+    return features
+}
+```
+
+-----
+
+## 下行特徵說明（Downlink Features）
+
+基於 CIC-DDoS2019 研究，下行流量特徵可有效區分真實攻擊和正常流量。
+
+### 11. 下行封包數（DL_PPS）
+
+  * **核心概念**：觀察目標伺服器是否有回應。正常雙向通訊應有對等的上下行流量，單向攻擊則沒有或很少下行封包。
+  * **Go 實作公式**：
+    ```go
+    dlPPS := float64(m.DlPacketCount)
+    ```
+  * **數值範圍**：`0.0` ~ 取決於實際流量（不取 Log，與 LogPPS 相比較）。
+
+### 12. 下行平均封包大小（DL_AvgLen）
+
+  * **核心概念**：區分正常下載（大封包，MTU 1500 bytes）和攻擊回應（小封包，ICMP/RST）。
+  * **Go 實作公式**：
+    ```go
+    var dlAvgLen float64
+    if m.DlPacketCount > 0 {
+        dlAvgLen = float64(m.DlByteCount) / float64(m.DlPacketCount)
+    }
+    ```
+  * **數值範圍**：`0.0` ~ `1500.0` bytes。
+
+### 13. PPS 比例（PPS_Ratio）
+
+  * **核心概念**：下行/上行封包數比例。正常流量 ~0.5-2.0，攻擊流量 <0.1。
+  * **Go 實作公式**：
+    ```go
+    var ppsRatio float64
+    if m.PacketCount > 0 && m.DlPacketCount > 0 {
+        ppsRatio = float64(m.DlPacketCount) / float64(m.PacketCount)
+    }
+    ```
+  * **數值範圍**：`0.0` ~ `無上限（通常 <10.0）`。
+
+### 14. 位元組比例（Byte_Ratio）
+
+  * **核心概念**：下行/上行位元組比例。正常下載 >10，攻擊 <0.5。
+  * **Go 實作公式**：
+    ```go
+    var byteRatio float64
+    if m.ByteCount > 0 && m.DlByteCount > 0 {
+        byteRatio = float64(m.DlByteCount) / float64(m.ByteCount)
+    }
+    ```
+  * **數值範圍**：`0.0` ~ `無上限（視頻下載可達 >50）`。
+
+### 15. ACK 封包比例（ACK_Ratio）
+
+  * **核心概念**：下行 TCP ACK 封包比例。正常 TCP 連線 >0.7，攻擊（無效連線）<0.3。
+  * **Go 實作公式**：
+    ```go
+    var ackRatio float64
+    if m.DlTcpCount > 0 {
+        ackRatio = float64(m.DlAckCount) / float64(m.DlTcpCount)
+    }
+    ```
+  * **數值範圍**：`0.0` ~ `1.0`。
+
+-----
+
+### 完整的轉換函數範例（含下行特徵）
+
+```go
+import (
+    "math"
+    "math/bits"
+)
+
+type UeFeatureVector struct {
+    // Uplink features
+    LogPPS    float64 `json:"log_pps"`
+    UlAvgLen  float64 `json:"ul_avg_len"`
+    IcmpRatio float64 `json:"icmp_ratio"`
+    TcpRatio  float64 `json:"tcp_ratio"`
+    UdpRatio  float64 `json:"udp_ratio"`
+    SynRatio  float64 `json:"syn_ratio"`
+    RstRatio  float64 `json:"rst_ratio"`
+    FlowRate  float64 `json:"flow_rate"`
+    FanOut    float64 `json:"fan_out"`
+
+    // Downlink features
+    DlPPS     float64 `json:"dl_pps"`
+    DlAvgLen  float64 `json:"dl_avg_len"`
+    PPSRatio  float64 `json:"pps_ratio"`
+    ByteRatio float64 `json:"byte_ratio"`
+    AckRatio  float64 `json:"ack_ratio"`
+}
+
+func ConvertToFeatures(m *ue_metrics_t) UeFeatureVector {
+    // 基礎分母，避免重複轉換
+    pktCnt := float64(m.PacketCount)
+    if pktCnt == 0 {
+        return UeFeatureVector{} // 全部回傳 0
+    }
+
+    // Uplink features
+    features := UeFeatureVector{
+        LogPPS:    math.Log10(pktCnt),
+        UlAvgLen:  float64(m.ByteCount) / pktCnt,
+        IcmpRatio: float64(m.IcmpCount) / pktCnt,
+        TcpRatio:  float64(m.TcpCount) / pktCnt,
+        UdpRatio:  float64(m.UdpCount) / pktCnt,
+        SynRatio:  float64(m.SynCount) / pktCnt,
+        RstRatio:  float64(m.RstCount) / pktCnt,
+        
+        // 關鍵特徵
+        FlowRate:  float64(m.NewFlowCount) / pktCnt,
+        FanOut:    float64(bits.OnesCount64(m.DstBitmap)) / 64.0,
+    }
+
+    // Downlink features (if downlink traffic exists)
+    dlPktCnt := float64(m.DlPacketCount)
+    if dlPktCnt > 0 {
+        features.DlPPS = dlPktCnt
+        features.DlAvgLen = float64(m.DlByteCount) / dlPktCnt
+        features.PPSRatio = dlPktCnt / pktCnt
+        features.ByteRatio = float64(m.DlByteCount) / float64(m.ByteCount)
+        
+        if m.DlTcpCount > 0 {
+            features.AckRatio = float64(m.DlAckCount) / float64(m.DlTcpCount)
+        }
+    }
+
+    return features
 }
 ```

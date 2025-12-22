@@ -90,21 +90,33 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 }
 
 // BuildSingleUEPrompt builds prompt for a single UE with template variable replacement
-// Supports placeholders: {global_avg_pps}, {global_avg_flow}, {global_avg_len},
-// {log_pps}, {avg_len}, {flow_rate}, {fan_out}, {tcp_ratio}, {syn_ratio}, {rst_ratio}
+// Supports placeholders: {global_avg_pps}, {global_avg_flow}, {global_avg_ul_len}, {global_avg_dl_len},
+// {global_avg_pps_ratio}, {global_avg_byte_ratio}, {global_avg_dl_pps}
+// {log_pps}, {ul_avg_len}, {flow_rate}, {fan_out}, {tcp_ratio}, {syn_ratio}, {rst_ratio}
+// {dl_pps}, {dl_avg_len}, {pps_ratio}, {byte_ratio}, {ack_ratio}
 func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalStats *models.GlobalNetworkStats) (systemContent string, userContent string) {
 	systemContent = c.systemPrompt
 
 	// Replace global statistics placeholders in system prompt (if globalStats provided)
 	if globalStats != nil {
+		// Uplink global stats
 		systemContent = replacePlaceholder(systemContent, "global_avg_pps", fmt.Sprintf("%.2f", globalStats.AvgLogPPS))
 		systemContent = replacePlaceholder(systemContent, "global_avg_flow", fmt.Sprintf("%.2f", globalStats.AvgFlowRate))
-		systemContent = replacePlaceholder(systemContent, "global_avg_len", fmt.Sprintf("%.0f", globalStats.AvgLen))
+		systemContent = replacePlaceholder(systemContent, "global_avg_ul_len", fmt.Sprintf("%.0f", globalStats.AvgUlLen))
+		// Downlink global stats
+		systemContent = replacePlaceholder(systemContent, "global_avg_dl_pps", fmt.Sprintf("%.2f", globalStats.AvgDlPPS))
+		systemContent = replacePlaceholder(systemContent, "global_avg_dl_len", fmt.Sprintf("%.0f", globalStats.AvgDlLen))
+		systemContent = replacePlaceholder(systemContent, "global_avg_pps_ratio", fmt.Sprintf("%.2f", globalStats.AvgPPSRatio))
+		systemContent = replacePlaceholder(systemContent, "global_avg_byte_ratio", fmt.Sprintf("%.2f", globalStats.AvgByteRatio))
 	} else {
 		// If no global stats, replace with "N/A"
 		systemContent = replacePlaceholder(systemContent, "global_avg_pps", "N/A")
 		systemContent = replacePlaceholder(systemContent, "global_avg_flow", "N/A")
-		systemContent = replacePlaceholder(systemContent, "global_avg_len", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_avg_ul_len", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_avg_dl_pps", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_avg_dl_len", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_avg_pps_ratio", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_avg_byte_ratio", "N/A")
 	}
 
 	// Build user content by replacing UE-specific placeholders
@@ -132,17 +144,24 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 		userContent = userDataTemplate
 	} else {
 		// Fallback: simple key-value format
-		userContent = "User Data: PPS:{log_pps}, Len:{avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}"
+		userContent = "User Data: PPS:{log_pps}, UL_Len:{ul_avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}"
 	}
 
-	// Replace UE-specific placeholders
+	// Replace UE-specific placeholders (uplink features)
 	userContent = replacePlaceholder(userContent, "log_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.LogPPS))
-	userContent = replacePlaceholder(userContent, "avg_len", fmt.Sprintf("%d", int(record.UeFeatureVector.AvgLen)))
+	userContent = replacePlaceholder(userContent, "ul_avg_len", fmt.Sprintf("%d", int(record.UeFeatureVector.AvgLen)))
 	userContent = replacePlaceholder(userContent, "flow_rate", fmt.Sprintf("%.2f", record.UeFeatureVector.NewFlowRate))
 	userContent = replacePlaceholder(userContent, "fan_out", fmt.Sprintf("%.2f", record.UeFeatureVector.FanOut))
 	userContent = replacePlaceholder(userContent, "tcp_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.TcpRatio))
 	userContent = replacePlaceholder(userContent, "syn_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.SynRatio))
 	userContent = replacePlaceholder(userContent, "rst_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.RstRatio))
+
+	// Replace downlink-specific placeholders (new features)
+	userContent = replacePlaceholder(userContent, "dl_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.DlPPS))
+	userContent = replacePlaceholder(userContent, "dl_avg_len", fmt.Sprintf("%d", int(record.UeFeatureVector.DlAvgLen)))
+	userContent = replacePlaceholder(userContent, "pps_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.PPSRatio))
+	userContent = replacePlaceholder(userContent, "byte_ratio", fmt.Sprintf("%.3f", record.UeFeatureVector.ByteRatio))
+	userContent = replacePlaceholder(userContent, "ack_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.AckRatio))
 
 	return systemContent, userContent
 }

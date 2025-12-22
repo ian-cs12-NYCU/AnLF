@@ -205,7 +205,7 @@ graph LR
     end
     
     subgraph "Metrics Structure"
-        Metrics["packet_count<br/>byte_count<br/>tcp_count / udp_count<br/>syn_count / rst_count<br/>new_flow_count<br/>dst_bitmap"]
+        Metrics["<b>Uplink Metrics:</b><br/>packet_count<br/>byte_count<br/>tcp_count / udp_count<br/>syn_count / rst_count<br/>new_flow_count<br/>dst_bitmap<br/><br/><b>Downlink Metrics:</b><br/>dl_packet_count<br/>dl_byte_count<br/>dl_tcp_count<br/>dl_ack_count"]
     end
     
     Packet --> XDP
@@ -222,20 +222,42 @@ graph LR
 
 ## 4. 特徵工程轉換 (Feature Engineering)
 
+### 4.1 Bidirectional Traffic Features (雙向流量特徵)
+
+AnLF 系統從 eBPF 擷取的指標分為兩大類：
+- **Uplink Features（上行特徵）**: 來自 UE 發出的流量
+- **Downlink Features（下行特徵）**: 目的地為 UE 的流量
+
+這種雙向監控能夠有效檢測：
+1. **Volumetric Attacks（容量型攻擊）**: 高上行 PPS，低下行回應
+2. **Asymmetric Attacks（不對稱攻擊）**: DL/UL Ratio 異常
+3. **Protocol Attacks（協定攻擊）**: ACK Ratio 過低表示無效 TCP 握手
+4. **Legitimate Traffic（正常流量）**: 高 Byte Ratio 表示影片下載等正常行為
+
 ```mermaid
 %%{init: {'theme':'neutral'}}%%
 graph TB
-    Raw["<b>Raw eBPF Metrics</b><br/>packet_count: 50000<br/>byte_count: 75MB<br/>tcp_count: 30000<br/>udp_count: 20000<br/>syn_count: 15000<br/>new_flow_count: 2000<br/>dst_bitmap: 0xFF..."]
+    Raw["<b>Raw eBPF Metrics</b><br/><br/><b>Uplink:</b><br/>packet_count: 50000<br/>byte_count: 75MB<br/>tcp_count: 30000<br/>udp_count: 20000<br/>syn_count: 15000<br/>new_flow_count: 2000<br/>dst_bitmap: 0xFF...<br/><br/><b>Downlink:</b><br/>dl_packet_count: 100<br/>dl_byte_count: 50KB<br/>dl_tcp_count: 80<br/>dl_ack_count: 20"]
     
-    Calc1["PPS =<br/>packet_count / window"]
-    Calc2["AvgLen =<br/>byte_count / packet_count"]
-    Calc3["TcpRatio =<br/>tcp_count / packet_count"]
-    Calc4["SynRatio =<br/>syn_count / packet_count"]
-    Calc5["FlowRate =<br/>new_flow_count / window"]
-    Calc6["FanOut =<br/>CountBits(dst_bitmap)"]
-    Calc7["LogPPS =<br/>log10(PPS+1)"]
+    subgraph "Uplink Calculations"
+        Calc1["PPS =<br/>packet_count / window"]
+        Calc2["AvgLen =<br/>byte_count / packet_count"]
+        Calc3["TcpRatio =<br/>tcp_count / packet_count"]
+        Calc4["SynRatio =<br/>syn_count / packet_count"]
+        Calc5["FlowRate =<br/>new_flow_count / window"]
+        Calc6["FanOut =<br/>CountBits(dst_bitmap)"]
+        Calc7["LogPPS =<br/>log10(PPS+1)"]
+    end
     
-    Features["<b>UeTrafficRecord</b><br/><b>(Feature Vector)</b><br/>Timestamp: 1734234567<br/>Supi: imsi-001010...<br/>UeIp: 60.60.0.1<br/><br/>LogPPS: 4.0<br/>AvgLen: 1500.0<br/>TcpRatio: 0.6<br/>UdpRatio: 0.4<br/>SynRatio: 0.3<br/>NewFlowRate: 400.0<br/>FanOut: 128"]
+    subgraph "Downlink Calculations"
+        DL1["DL_PPS =<br/>dl_packet_count"]
+        DL2["DL_AvgLen =<br/>dl_byte_count / dl_packet_count"]
+        DL3["PPS_Ratio =<br/>DL_PPS / UL_PPS"]
+        DL4["Byte_Ratio =<br/>dl_byte_count / byte_count"]
+        DL5["ACK_Ratio =<br/>dl_ack_count / dl_tcp_count"]
+    end
+    
+    Features["<b>UeTrafficRecord</b><br/><b>(Feature Vector)</b><br/>Timestamp: 1734234567<br/>Supi: imsi-001010...<br/>UeIp: 60.60.0.1<br/><br/><b>Uplink:</b><br/>LogPPS: 4.0<br/>UlAvgLen: 1500.0<br/>TcpRatio: 0.6<br/>UdpRatio: 0.4<br/>SynRatio: 0.3<br/>NewFlowRate: 0.04<br/>FanOut: 0.5<br/><br/><b>Downlink:</b><br/>DL_PPS: 100<br/>DL_AvgLen: 512<br/>PPS_Ratio: 0.002<br/>Byte_Ratio: 0.00067<br/>ACK_Ratio: 0.25"]
     
     Raw --> Calc1
     Raw --> Calc2
@@ -245,6 +267,12 @@ graph TB
     Raw --> Calc6
     Raw --> Calc7
     
+    Raw --> DL1
+    Raw --> DL2
+    Raw --> DL3
+    Raw --> DL4
+    Raw --> DL5
+    
     Calc1 --> Features
     Calc2 --> Features
     Calc3 --> Features
@@ -252,6 +280,12 @@ graph TB
     Calc5 --> Features
     Calc6 --> Features
     Calc7 --> Features
+    
+    DL1 --> Features
+    DL2 --> Features
+    DL3 --> Features
+    DL4 --> Features
+    DL5 --> Features
     
     style Raw fill:#ffcccc,stroke:#cc0000
     style Features fill:#ccffcc,stroke:#00cc00
@@ -262,7 +296,21 @@ graph TB
     style Calc5 fill:#ffffcc,stroke:#cccc00
     style Calc6 fill:#ffffcc,stroke:#cccc00
     style Calc7 fill:#ffffcc,stroke:#cccc00
+    style DL1 fill:#ccddff,stroke:#0066cc
+    style DL2 fill:#ccddff,stroke:#0066cc
+    style DL3 fill:#ccddff,stroke:#0066cc
+    style DL4 fill:#ccddff,stroke:#0066cc
+    style DL5 fill:#ccddff,stroke:#0066cc
 ```
+
+### 4.2 Detection Scenarios (檢測場景)
+
+| Attack Type | UL Features | DL Features | Detection Rule |
+|------------|------------|-------------|----------------|
+| **SYN Flood** | High PPS, SYN_Ratio > 0.6 | Low DL_PPS, ACK_Ratio < 0.3 | Asymmetric TCP handshake |
+| **UDP Flood** | High PPS, UDP_Ratio > 0.8 | PPS_Ratio < 0.1 | No valid responses |
+| **Carpet Bombing** | High Fan_Out > 0.5 | Byte_Ratio < 0.5 | Distributed attack |
+| **Legitimate Download** | Low PPS | High Byte_Ratio > 10, DL_AvgLen > 1000 | Normal video download |
 
 ## 5. Message Queue 架構 (Message Queue Architecture - Dual Pipeline)
 

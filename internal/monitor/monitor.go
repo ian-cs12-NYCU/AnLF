@@ -153,7 +153,8 @@ func (m *TrafficMonitor) pollAndSend() {
 	}
 }
 
-// ipToUint32 converts an IP string to uint32 in network byte order format
+// ipToUint32 converts an IP string to uint32 in network byte order (big-endian)
+// This matches the format used by iph->saddr in eBPF (network byte order)
 func ipToUint32(ipStr string) uint32 {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
@@ -163,5 +164,6 @@ func ipToUint32(ipStr string) uint32 {
 	if ip == nil {
 		return 0
 	}
+	// Convert IP to uint32 (Little Endian for x86)
 	return uint32(ip[0]) | uint32(ip[1])<<8 | uint32(ip[2])<<16 | uint32(ip[3])<<24
 }

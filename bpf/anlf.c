@@ -12,7 +12,11 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-static __always_inline void update_ue_metrics(
+// Direction constants
+#define DIRECTION_UL 1
+#define DIRECTION_DL 2
+
+static __always_inline void update_ue_uplink_metrics(
     __u32 inner_src_ip,
     __u32 pkt_len,
     __u8 proto,
@@ -88,10 +92,50 @@ static __always_inline void update_ue_metrics(
     }
 }
 
+// Update downlink metrics for a UE (identified by inner destination IP in GTP-U)
+static __always_inline void update_ue_dl_metrics(
+    __u32 inner_dst_ip,
+    __u32 pkt_len,
+    __u8 proto,
+    __u8 tcp_flags)
+{
+    struct ue_metrics_t *metrics;
+    struct ue_metrics_t new_metrics = {};
+    
+    metrics = bpf_map_lookup_elem(&ue_metrics_map, &inner_dst_ip);
+    
+    if (metrics) {
+        __sync_fetch_and_add(&metrics->dl_packet_count, 1);
+        __sync_fetch_and_add(&metrics->dl_byte_count, pkt_len);
+        
+        if (proto == IPPROTO_TCP) {
+            __sync_fetch_and_add(&metrics->dl_tcp_count, 1);
+            // Check if ACK flag is set (bit 4)
+            if (tcp_flags & 0x10) {
+                __sync_fetch_and_add(&metrics->dl_ack_count, 1);
+            }
+        }
+    } else {
+        // Create new entry with downlink metrics
+        new_metrics.dl_packet_count = 1;
+        new_metrics.dl_byte_count = pkt_len;
+        
+        if (proto == IPPROTO_TCP) {
+            new_metrics.dl_tcp_count = 1;
+            if (tcp_flags & 0x10) {
+                new_metrics.dl_ack_count = 1;
+            }
+        }
+        
+        bpf_map_update_elem(&ue_metrics_map, &inner_dst_ip, &new_metrics, BPF_ANY);
+    }
+}
+
 static __always_inline int process_inner_ip(
     struct xdp_md *ctx,
     struct iphdr *iph,
-    void *data_end)
+    void *data_end,
+    __u8 direction)
 {
     if ((void *)iph + sizeof(*iph) > data_end) {
         return XDP_PASS;
@@ -109,15 +153,15 @@ static __always_inline int process_inner_ip(
     __u8 tcp_flags = 0;
     int is_new_flow = 0;
     
+    // Extract TCP flags if applicable
     if (proto == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((void *)iph + sizeof(*iph));
         if ((void *)tcph + sizeof(*tcph) <= data_end) {
             __u16 flags_word = *(__u16 *)((void *)tcph + 12);
             tcp_flags = (flags_word >> 8) & 0xFF;
             
-            // For TCP, only SYN packets indicate new connections
-            // This is efficient: we only do flow tracking on SYN packets
-            if (tcp_flags & 0x02) {
+            // For uplink: track new flows on SYN packets
+            if (direction == DIRECTION_UL && (tcp_flags & 0x02)) {
                 struct flow_key fkey = {};
                 fkey.src_ip = inner_src_ip;
                 fkey.dst_ip = inner_dst_ip;
@@ -136,27 +180,31 @@ static __always_inline int process_inner_ip(
     } else if (proto == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
         if ((void *)udph + sizeof(*udph) <= data_end) {
-            // For UDP, always check flow tracking
-            // This is necessary to distinguish:
-            // - Normal: Few flows, many packets per flow -> low new_flow_rate
-            // - Attack: Many flows, few packets per flow -> high new_flow_rate
-            struct flow_key fkey = {};
-            fkey.src_ip = inner_src_ip;
-            fkey.dst_ip = inner_dst_ip;
-            fkey.proto = proto;
-            fkey.src_port = bpf_ntohs(udph->source);
-            fkey.dst_port = bpf_ntohs(udph->dest);
-            
-            __u8 *existing = bpf_map_lookup_elem(&flow_tracking_map, &fkey);
-            if (!existing) {
-                is_new_flow = 1;
-                __u8 marker = 1;
-                bpf_map_update_elem(&flow_tracking_map, &fkey, &marker, BPF_ANY);
+            // For UDP in uplink, check flow tracking
+            if (direction == DIRECTION_UL) {
+                struct flow_key fkey = {};
+                fkey.src_ip = inner_src_ip;
+                fkey.dst_ip = inner_dst_ip;
+                fkey.proto = proto;
+                fkey.src_port = bpf_ntohs(udph->source);
+                fkey.dst_port = bpf_ntohs(udph->dest);
+                
+                __u8 *existing = bpf_map_lookup_elem(&flow_tracking_map, &fkey);
+                if (!existing) {
+                    is_new_flow = 1;
+                    __u8 marker = 1;
+                    bpf_map_update_elem(&flow_tracking_map, &fkey, &marker, BPF_ANY);
+                }
             }
         }
     }
     
-    update_ue_metrics(inner_src_ip, pkt_len, proto, tcp_flags, inner_dst_ip, is_new_flow);
+    // Update metrics based on direction
+    if (direction == DIRECTION_UL) {
+        update_ue_uplink_metrics(inner_src_ip, pkt_len, proto, tcp_flags, inner_dst_ip, is_new_flow);
+    } else if (direction == DIRECTION_DL) {
+        update_ue_dl_metrics(inner_dst_ip, pkt_len, proto, tcp_flags);
+    }
     
     return XDP_PASS;
 }
@@ -164,7 +212,8 @@ static __always_inline int process_inner_ip(
 static __always_inline int handle_gtpu(
     struct xdp_md *ctx,
     const void *gtpuh,
-    void *data_end)
+    void *data_end,
+    __u8 direction)
 {
     const void *inner = NULL;
     __u16 gtp_msg_len = 0;
@@ -178,23 +227,26 @@ static __always_inline int handle_gtpu(
         return XDP_PASS;
     }
 
-    return process_inner_ip(ctx, (struct iphdr *)inner, data_end);
+    return process_inner_ip(ctx, (struct iphdr *)inner, data_end, direction);
 }
 
 static __always_inline int handle_udp(
     struct xdp_md *ctx,
     struct udphdr *udph,
-    void *data_end)
+    void *data_end,
+    __u8 direction)
 {
     if ((void *)udph + sizeof(*udph) > data_end) {
         return XDP_PASS;
     }
 
     __u16 dest_port = bpf_ntohs(udph->dest);
+    __u16 src_port = bpf_ntohs(udph->source);
     
-    if (dest_port == GTP_UDP_PORT) {
+    // GTP-U traffic on port 2152
+    if (dest_port == GTP_UDP_PORT || src_port == GTP_UDP_PORT) {
         void *gtpuh = (void *)udph + sizeof(*udph);
-        return handle_gtpu(ctx, gtpuh, data_end);
+        return handle_gtpu(ctx, gtpuh, data_end, direction);
     }
 
     return XDP_PASS;
@@ -203,7 +255,8 @@ static __always_inline int handle_udp(
 static __always_inline int handle_ipv4(
     struct xdp_md *ctx,
     struct iphdr *iph,
-    void *data_end)
+    void *data_end,
+    __u8 direction)
 {
     if ((void *)iph + sizeof(*iph) > data_end) {
         return XDP_PASS;
@@ -211,7 +264,7 @@ static __always_inline int handle_ipv4(
 
     if (iph->protocol == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
-        return handle_udp(ctx, udph, data_end);
+        return handle_udp(ctx, udph, data_end, direction);
     }
 
     return XDP_PASS;
@@ -225,17 +278,47 @@ int anlf_xdp_main(struct xdp_md *ctx)
     
     struct ethhdr *eth = data;
     
-    if ((void *)eth + sizeof(*eth) > data_end) {
-        return XDP_PASS;
+    // Try to parse as Ethernet first
+    if ((void *)eth + sizeof(*eth) <= data_end) {
+        __u16 eth_proto = bpf_ntohs(eth->h_proto);
+        
+        if (eth_proto == ETH_P_IP) {
+            struct iphdr *iph = (struct iphdr *)(eth + 1);
+            
+            if ((void *)iph + sizeof(*iph) > data_end) {
+                return XDP_PASS;
+            }
+            
+            __u8 direction = DIRECTION_UL;  // Default to UL
+            
+            // Check if this is UDP to determine direction from port
+            if (iph->protocol == IPPROTO_UDP) {
+                struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
+                if ((void *)udph + sizeof(*udph) <= data_end) {
+                    __u16 dest_port = bpf_ntohs(udph->dest);
+                    __u16 src_port = bpf_ntohs(udph->source);
+                    
+                    // UL: traffic going TO GTP port
+                    // DL: traffic coming FROM GTP port
+                    if (src_port == GTP_UDP_PORT) {
+                        direction = DIRECTION_DL;
+                    } else if (dest_port == GTP_UDP_PORT) {
+                        direction = DIRECTION_UL;
+                    }
+                }
+            }
+            
+            return handle_ipv4(ctx, iph, data_end, direction);
+        }
     }
     
-    __u16 eth_proto = bpf_ntohs(eth->h_proto);
-    
-    if (eth_proto != ETH_P_IP) {
-        return XDP_PASS;
+    // Fallback: Check if it's L3 (Raw IP) for interfaces like upfgtp
+    struct iphdr *iph = data;
+    if ((void *)iph + sizeof(*iph) <= data_end && iph->version == 4) {
+        // On upfgtp (RX), we see decapsulated Uplink traffic (Inner IP)
+        // We treat it as Uplink because it's coming from the tunnel
+        return process_inner_ip(ctx, iph, data_end, DIRECTION_UL);
     }
     
-    struct iphdr *iph = (struct iphdr *)(eth + 1);
-    
-    return handle_ipv4(ctx, iph, data_end);
+    return XDP_PASS;
 }

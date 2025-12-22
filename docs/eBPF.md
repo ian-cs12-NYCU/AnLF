@@ -1,15 +1,18 @@
 ## eBPF Map Value 結構說明
-上行 Uplink
-```
+
+### Uplink 統計（上行流量）
+Key: UE 的內部 Source IP (GTP-U tunnel 內的源 IP)
+
+```C
 // 定義在 eBPF C 程式中的 Map Value 結構
 struct ue_metrics_t {
-    // --- 1. 流量規模 (Volume Metrics) ---
+    // --- 1. 流量規模 (Volume Metrics) - Uplink ---
     // 用途：計算 PPS (Packets Per Second) 和 BPS (Bytes Per Second)
     // 物理意義：最基礎的 DDoS 指標，量大通常有問題。
     u64 packet_count;  
     u64 byte_count;    
 
-    // --- 2. 協議分佈 (Protocol Distribution) ---
+    // --- 2. 協議分佈 (Protocol Distribution) - Uplink ---
     // 用途：計算 TCP/UDP/ICMP 的比例
     // 物理意義：
     // - Carpet Bombing 常見是用 UDP (效率高)。
@@ -19,7 +22,7 @@ struct ue_metrics_t {
     u64 udp_count;     
     u64 icmp_count;    // [擴充] 多蒐集這個，成本極低，但能排除 Ping Flood 誤判
 
-    // --- 3. TCP 旗標細節 (TCP Flags) ---
+    // --- 3. TCP 旗標細節 (TCP Flags) - Uplink ---
     // 用途：計算 SYN Rate, RST Rate
     // 物理意義：
     // - SYN 高但 ACK 低：典型 SYN Flood。
@@ -27,7 +30,7 @@ struct ue_metrics_t {
     u64 syn_count;     // [擴充] 紀錄 TCP SYN 封包
     u64 rst_count;     // [擴充] 紀錄 TCP RST 封包
 
-    // --- 4. 行為意圖 (Behavioral Intent) ---
+    // --- 4. 行為意圖 (Behavioral Intent) - Uplink ---
     // 用途：計算 New Flow Rate
     // 物理意義：
     // - 只有上行 (Uplink) 需要算。
@@ -35,12 +38,22 @@ struct ue_metrics_t {
     // - 邏輯：TCP看SYN, UDP看第一包(或全部算，視MVP實作而定)。
     u64 new_flow_count; 
 
-    // --- 5. 目標多樣性 (Target Diversity / Fan-Out) ---
+    // --- 5. 目標多樣性 (Target Diversity / Fan-Out) - Uplink ---
     // 用途：計算 Fan-Out Rate (Dst Dispersion)
     // 物理意義：偵測 Carpet Bombing 的核心數值。
     // 邏輯：利用 IP 最後 8 bits 做 Bitmap 映射。
     // 0 = 沒打, 1 = 有打。最後算有幾個 bit 是 1。
     u64 dst_bitmap;    
+
+    // --- 6. 下行流量統計 (Downlink Metrics) ---
+    // 用途：區分真實攻擊和正常流量（基於 CIC-DDoS2019 研究）
+    // 物理意義：
+    // - 攻擊流量：大量上行但幾乎無下行回應
+    // - 正常流量：雙向對等，下行可能更多（下載場景）
+    u64 dl_packet_count;  // 下行封包數
+    u64 dl_byte_count;    // 下行位元組數
+    u64 dl_tcp_count;     // 下行 TCP 封包數
+    u64 dl_ack_count;     // 下行 ACK 封包數（檢查 TCP flag bit 4）
 };
 ```
 
