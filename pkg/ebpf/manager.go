@@ -5,14 +5,17 @@ import (
 	"net"
 
 	"github.com/cilium/ebpf/link"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // UeMetrics is an exported alias for the eBPF-generated metrics struct
 type UeMetrics = anlfUeMetricsT
 
 type Manager struct {
-	objs anlfObjects
-	link link.Link
+	objs     anlfObjects
+	xdpLink  link.Link
+	tcFilter *netlink.BpfFilter
 }
 
 func NewManager() (*Manager, error) {
@@ -40,7 +43,57 @@ func (m *Manager) AttachXDP(ifaceName string) error {
 		return fmt.Errorf("attaching XDP: %w", err)
 	}
 
-	m.link = l
+	m.xdpLink = l
+	return nil
+}
+
+func (m *Manager) AttachTC(ifaceName string) error {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return fmt.Errorf("getting interface %s: %w", ifaceName, err)
+	}
+
+	// Ensure clsact qdisc exists on the interface
+	if err := ensureClsact(iface.Index); err != nil {
+		return fmt.Errorf("ensuring clsact qdisc: %w", err)
+	}
+
+	// Attach TC egress filter
+	filter := &netlink.BpfFilter{
+		FilterAttrs: netlink.FilterAttrs{
+			LinkIndex: iface.Index,
+			Parent:    uint32(netlink.HANDLE_MIN_EGRESS),
+			Priority:  50,
+			Protocol:  unix.ETH_P_ALL,
+		},
+		Fd:           m.objs.AnlfTcEgress.FD(),
+		Name:         "anlf_tc_egress",
+		DirectAction: true,
+	}
+
+	if err := netlink.FilterAdd(filter); err != nil {
+		return fmt.Errorf("adding TC filter: %w", err)
+	}
+
+	m.tcFilter = filter
+	return nil
+}
+
+// ensureClsact ensures that clsact qdisc is attached to the interface
+func ensureClsact(ifindex int) error {
+	qdisc := &netlink.GenericQdisc{
+		QdiscAttrs: netlink.QdiscAttrs{
+			LinkIndex: ifindex,
+			Handle:    netlink.MakeHandle(0xffff, 0),
+			Parent:    netlink.HANDLE_CLSACT,
+		},
+		QdiscType: "clsact",
+	}
+
+	if err := netlink.QdiscAdd(qdisc); err != nil {
+		// If already exists, that's fine
+		return nil
+	}
 	return nil
 }
 
@@ -120,12 +173,29 @@ func (m *Manager) ResetMetrics() error {
 }
 
 func (m *Manager) Close() error {
-	if m.link != nil {
-		if err := m.link.Close(); err != nil {
-			return err
+	var errs []error
+	
+	if m.xdpLink != nil {
+		if err := m.xdpLink.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing XDP link: %w", err))
 		}
 	}
-	return m.objs.Close()
+	
+	if m.tcFilter != nil {
+		if err := netlink.FilterDel(m.tcFilter); err != nil {
+			errs = append(errs, fmt.Errorf("closing TC filter: %w", err))
+		}
+	}
+	
+	if err := m.objs.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("closing objects: %w", err))
+	}
+	
+	if len(errs) > 0 {
+		return fmt.Errorf("errors closing manager: %v", errs)
+	}
+	
+	return nil
 }
 
 func IPFromNetByteOrder(ipNet uint32) net.IP {

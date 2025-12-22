@@ -75,7 +75,7 @@ func generateSampleRecord() *models.UeTrafficRecord {
 		UeIp:      "10.60.0.1",
 		UeFeatureVector: models.UeFeatureVector{
 			// Uplink features
-			LogPPS:      5.0,   // High PPS: log10(100k) = 5.0 (potential attack)
+			UlLogPPS:    5.0,   // High PPS: log10(100k) = 5.0 (potential attack)
 			AvgLen:      512.0, // Medium packet size
 			IcmpRatio:   0.01,  // Low ICMP ratio
 			TcpRatio:    0.6,   // 60% TCP
@@ -85,7 +85,7 @@ func generateSampleRecord() *models.UeTrafficRecord {
 			NewFlowRate: 0.9,   // High flow rate (90% are new flows - attack indicator)
 			FanOut:      0.78,  // High fan-out: 50/64 targets (carpet bombing indicator)
 			// Downlink features (Directional Symmetry)
-			DlPPS:     50.0,  // Low downlink packets (asymmetric - attack sign)
+			DlLogPPS:  1.7,   // Low downlink packets (log10(50) = 1.7)
 			DlAvgLen:  64.0,  // Small DL packets (RST/ICMP error responses)
 			PPSRatio:  0.05,  // Very low DL/UL ratio (0.05 = attack, normal ~1.0)
 			ByteRatio: 0.006, // Extremely low byte ratio (attack pattern)

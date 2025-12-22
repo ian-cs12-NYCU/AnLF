@@ -10,9 +10,18 @@
 #define ETH_P_IP 0x0800
 #endif
 
+#ifndef TC_ACT_OK
+#define TC_ACT_OK 0
+#endif
+
+#ifndef TC_ACT_SHOT
+#define TC_ACT_SHOT 2
+#endif
+
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 // Direction constants
+#define DIRECTION_UNKNOWN 0
 #define DIRECTION_UL 1
 #define DIRECTION_DL 2
 
@@ -153,15 +162,29 @@ static __always_inline int process_inner_ip(
     __u8 tcp_flags = 0;
     int is_new_flow = 0;
     
-    // Extract TCP flags if applicable
+    // Check if source is in UE subnet (10.60.0.0/16) for uplink
+    __u32 src_ip_host = bpf_ntohl(inner_src_ip);
+    __u32 ue_subnet_prefix = 0x0a3c0000;  // 10.60.0.0
+    __u32 subnet_mask = 0xffff0000;       // /16 mask
+    
+    // Only process uplink traffic (source in UE subnet)
+    // Downlink is handled by TC egress program
+    if ((src_ip_host & subnet_mask) != ue_subnet_prefix) {
+        // Not from UE subnet, skip
+        return XDP_PASS;
+    }
+    
+    direction = DIRECTION_UL;
+    
+    // Extract TCP flags and track new flows
     if (proto == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((void *)iph + sizeof(*iph));
         if ((void *)tcph + sizeof(*tcph) <= data_end) {
             __u16 flags_word = *(__u16 *)((void *)tcph + 12);
             tcp_flags = (flags_word >> 8) & 0xFF;
             
-            // For uplink: track new flows on SYN packets
-            if (direction == DIRECTION_UL && (tcp_flags & 0x02)) {
+            // Track new flows on SYN packets
+            if (tcp_flags & 0x02) {
                 struct flow_key fkey = {};
                 fkey.src_ip = inner_src_ip;
                 fkey.dst_ip = inner_dst_ip;
@@ -180,31 +203,24 @@ static __always_inline int process_inner_ip(
     } else if (proto == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
         if ((void *)udph + sizeof(*udph) <= data_end) {
-            // For UDP in uplink, check flow tracking
-            if (direction == DIRECTION_UL) {
-                struct flow_key fkey = {};
-                fkey.src_ip = inner_src_ip;
-                fkey.dst_ip = inner_dst_ip;
-                fkey.proto = proto;
-                fkey.src_port = bpf_ntohs(udph->source);
-                fkey.dst_port = bpf_ntohs(udph->dest);
-                
-                __u8 *existing = bpf_map_lookup_elem(&flow_tracking_map, &fkey);
-                if (!existing) {
-                    is_new_flow = 1;
-                    __u8 marker = 1;
-                    bpf_map_update_elem(&flow_tracking_map, &fkey, &marker, BPF_ANY);
-                }
+            struct flow_key fkey = {};
+            fkey.src_ip = inner_src_ip;
+            fkey.dst_ip = inner_dst_ip;
+            fkey.proto = proto;
+            fkey.src_port = bpf_ntohs(udph->source);
+            fkey.dst_port = bpf_ntohs(udph->dest);
+            
+            __u8 *existing = bpf_map_lookup_elem(&flow_tracking_map, &fkey);
+            if (!existing) {
+                is_new_flow = 1;
+                __u8 marker = 1;
+                bpf_map_update_elem(&flow_tracking_map, &fkey, &marker, BPF_ANY);
             }
         }
     }
     
-    // Update metrics based on direction
-    if (direction == DIRECTION_UL) {
-        update_ue_uplink_metrics(inner_src_ip, pkt_len, proto, tcp_flags, inner_dst_ip, is_new_flow);
-    } else if (direction == DIRECTION_DL) {
-        update_ue_dl_metrics(inner_dst_ip, pkt_len, proto, tcp_flags);
-    }
+    // Update uplink metrics
+    update_ue_uplink_metrics(inner_src_ip, pkt_len, proto, tcp_flags, inner_dst_ip, is_new_flow);
     
     return XDP_PASS;
 }
@@ -289,36 +305,180 @@ int anlf_xdp_main(struct xdp_md *ctx)
                 return XDP_PASS;
             }
             
-            __u8 direction = DIRECTION_UL;  // Default to UL
-            
-            // Check if this is UDP to determine direction from port
-            if (iph->protocol == IPPROTO_UDP) {
-                struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
-                if ((void *)udph + sizeof(*udph) <= data_end) {
-                    __u16 dest_port = bpf_ntohs(udph->dest);
-                    __u16 src_port = bpf_ntohs(udph->source);
-                    
-                    // UL: traffic going TO GTP port
-                    // DL: traffic coming FROM GTP port
-                    if (src_port == GTP_UDP_PORT) {
-                        direction = DIRECTION_DL;
-                    } else if (dest_port == GTP_UDP_PORT) {
-                        direction = DIRECTION_UL;
-                    }
-                }
-            }
-            
-            return handle_ipv4(ctx, iph, data_end, direction);
+            return handle_ipv4(ctx, iph, data_end, DIRECTION_UNKNOWN);
         }
     }
     
     // Fallback: Check if it's L3 (Raw IP) for interfaces like upfgtp
+    // On upfgtp RX (ingress), we see decapsulated uplink traffic (Inner IP)
     struct iphdr *iph = data;
     if ((void *)iph + sizeof(*iph) <= data_end && iph->version == 4) {
-        // On upfgtp (RX), we see decapsulated Uplink traffic (Inner IP)
-        // We treat it as Uplink because it's coming from the tunnel
-        return process_inner_ip(ctx, iph, data_end, DIRECTION_UL);
+        return process_inner_ip(ctx, iph, data_end, DIRECTION_UNKNOWN);
     }
     
     return XDP_PASS;
+}
+
+// ============================================================================
+// TC Egress Program for Downlink Traffic
+// ============================================================================
+
+/**
+ * @brief Process inner IP packet from GTP-U tunnel in TC context
+ * 
+ * @param skb Socket buffer
+ * @param iph Inner IP header
+ * @param data_end End of packet data
+ * @return TC_ACT_OK on success
+ */
+static __always_inline int tc_process_inner_ip(
+    struct __sk_buff *skb,
+    struct iphdr *iph,
+    void *data_end)
+{
+    if ((void *)iph + sizeof(*iph) > data_end) {
+        return TC_ACT_OK;
+    }
+    
+    if (iph->version != 4) {
+        return TC_ACT_OK;
+    }
+    
+    __u32 inner_dst_ip = iph->daddr;
+    __u8 proto = iph->protocol;
+    __u32 pkt_len = (__u32)(data_end - (void *)iph);
+    
+    // Check subnet 10.60.0.0/16 for downlink direction
+    __u32 dst_ip_host = bpf_ntohl(inner_dst_ip);
+    __u32 ue_subnet_prefix = 0x0a3c0000;  // 10.60.0.0
+    __u32 subnet_mask = 0xffff0000;       // /16 mask
+    
+    // Only process if destination is in UE subnet (downlink traffic)
+    if ((dst_ip_host & subnet_mask) != ue_subnet_prefix) {
+        return TC_ACT_OK;
+    }
+    
+    __u8 tcp_flags = 0;
+    
+    // Extract TCP flags if applicable
+    if (proto == IPPROTO_TCP) {
+        struct tcphdr *tcph = (struct tcphdr *)((void *)iph + sizeof(*iph));
+        if ((void *)tcph + sizeof(*tcph) <= data_end) {
+            __u16 flags_word = *(__u16 *)((void *)tcph + 12);
+            tcp_flags = (flags_word >> 8) & 0xFF;
+        }
+    }
+    
+    // Update downlink metrics for the UE
+    update_ue_dl_metrics(inner_dst_ip, pkt_len, proto, tcp_flags);
+    
+    return TC_ACT_OK;
+}
+
+/**
+ * @brief Handle GTP-U packet in TC context
+ * 
+ * @param skb Socket buffer
+ * @param gtpuh GTP-U header pointer
+ * @param data_end End of packet data
+ * @return TC_ACT_OK on success
+ */
+static __always_inline int tc_handle_gtpu(
+    struct __sk_buff *skb,
+    const void *gtpuh,
+    void *data_end)
+{
+    const void *inner = NULL;
+    __u16 gtp_msg_len = 0;
+    const struct gtpu_fixed *gtp_hdr = NULL;
+
+    if (gtpu_locate_inner_l3(gtpuh, data_end, &inner, &gtp_msg_len, &gtp_hdr) < 0) {
+        return TC_ACT_OK;
+    }
+
+    if (inner + sizeof(struct iphdr) > data_end) {
+        return TC_ACT_OK;
+    }
+
+    return tc_process_inner_ip(skb, (struct iphdr *)inner, data_end);
+}
+
+/**
+ * @brief Handle UDP packet in TC context
+ * 
+ * @param skb Socket buffer
+ * @param udph UDP header
+ * @param data_end End of packet data
+ * @return TC_ACT_OK on success
+ */
+static __always_inline int tc_handle_udp(
+    struct __sk_buff *skb,
+    struct udphdr *udph,
+    void *data_end)
+{
+    if ((void *)udph + sizeof(*udph) > data_end) {
+        return TC_ACT_OK;
+    }
+
+    __u16 dest_port = bpf_ntohs(udph->dest);
+    __u16 src_port = bpf_ntohs(udph->source);
+    
+    // GTP-U traffic on port 2152
+    if (dest_port == GTP_UDP_PORT || src_port == GTP_UDP_PORT) {
+        void *gtpuh = (void *)udph + sizeof(*udph);
+        return tc_handle_gtpu(skb, gtpuh, data_end);
+    }
+
+    return TC_ACT_OK;
+}
+
+/**
+ * @brief TC egress program entry point for downlink traffic
+ * Captures packets leaving upfgtp interface (egress path)
+ * 
+ * On upfgtp, egress traffic is decapsulated inner IP packets
+ * going to UE devices (downlink direction).
+ * 
+ * @param skb Socket buffer
+ * @return TC_ACT_OK to allow packet, TC_ACT_SHOT to drop
+ */
+SEC("tc")
+int anlf_tc_egress(struct __sk_buff *skb)
+{
+    void *data = (void *)(long)skb->data;
+    void *data_end = (void *)(long)skb->data_end;
+    
+    // Check if packet starts with Ethernet header
+    struct ethhdr *eth = data;
+    if ((void *)eth + sizeof(*eth) <= data_end) {
+        __u16 eth_proto = bpf_ntohs(eth->h_proto);
+        
+        if (eth_proto == ETH_P_IP) {
+            struct iphdr *iph = (struct iphdr *)(eth + 1);
+            
+            if ((void *)iph + sizeof(*iph) > data_end) {
+                return TC_ACT_OK;
+            }
+            
+            if (iph->protocol == IPPROTO_UDP) {
+                struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
+                return tc_handle_udp(skb, udph, data_end);
+            }
+        }
+    }
+    
+    // Fallback: Check if it's raw IP (no Ethernet header)
+    // This is the common case for upfgtp interface
+    struct iphdr *iph = data;
+    if ((void *)iph + sizeof(*iph) <= data_end && iph->version == 4) {
+        if (iph->protocol == IPPROTO_UDP) {
+            struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
+            return tc_handle_udp(skb, udph, data_end);
+        }
+        
+        // For non-GTP-U traffic (direct IP to UE subnet), process as inner IP
+        return tc_process_inner_ip(skb, iph, data_end);
+    }
+    
+    return TC_ACT_OK;
 }

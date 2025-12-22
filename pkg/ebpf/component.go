@@ -50,9 +50,17 @@ func (c *Component) Start(ctx context.Context) error {
 		_ = c.manager.Close()
 		return fmt.Errorf("failed to attach XDP to interface %s: %w", c.iface, err)
 	}
+	logger.MainLog.Infof("✓ eBPF XDP attached successfully to %s", c.iface)
+
+	logger.MainLog.Infof("Attaching TC egress to interface %s...", c.iface)
+	if err := c.manager.AttachTC(c.iface); err != nil {
+		// Try to close manager if attach fails
+		_ = c.manager.Close()
+		return fmt.Errorf("failed to attach TC to interface %s: %w", c.iface, err)
+	}
+	logger.MainLog.Infof("✓ eBPF TC egress attached successfully to %s", c.iface)
 
 	c.isStarted = true
-	logger.MainLog.Infof("✓ eBPF XDP attached successfully to %s", c.iface)
 	return nil
 }
 

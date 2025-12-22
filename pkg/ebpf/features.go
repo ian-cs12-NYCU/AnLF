@@ -24,9 +24,9 @@ func ConvertToFeatures(m *anlfUeMetricsT, windowDuration float64) models.UeFeatu
 	}
 
 	// LogPPS: log10(packet_count)
-	logPPS := 0.0
+	ulLogPPS := 0.0
 	if ulPktCnt > 0 {
-		logPPS = math.Log10(ulPktCnt)
+		ulLogPPS = math.Log10(ulPktCnt)
 	}
 
 	// AvgLen: bytes / packets
@@ -58,15 +58,15 @@ func ConvertToFeatures(m *anlfUeMetricsT, windowDuration float64) models.UeFeatu
 	fanOut := float64(bits.OnesCount64(m.DstBitmap)) / 64.0
 
 	// Downlink metrics
-	dlPPS := 0.0
+	dlLogPPS := 0.0
 	dlAvgLen := 0.0
 	ppsRatio := 0.0
 	byteRatio := 0.0
 	ackRatio := 0.0
 
 	if dlPktCnt > 0 {
-		// DL PPS (not log scale, just the count)
-		dlPPS = dlPktCnt
+		// DL PPS (log scale)
+		dlLogPPS = math.Log10(dlPktCnt)
 
 		// DL Average packet length
 		if m.DlByteCount > 0 {
@@ -91,7 +91,7 @@ func ConvertToFeatures(m *anlfUeMetricsT, windowDuration float64) models.UeFeatu
 
 	return models.UeFeatureVector{
 		// Uplink features
-		LogPPS:      math.Round(logPPS*10000) / 10000,
+		UlLogPPS:    math.Round(ulLogPPS*10000) / 10000,
 		AvgLen:      math.Round(avgLen*10000) / 10000,
 		IcmpRatio:   math.Round(icmpRatio*10000) / 10000,
 		TcpRatio:    math.Round(tcpRatio*10000) / 10000,
@@ -101,7 +101,7 @@ func ConvertToFeatures(m *anlfUeMetricsT, windowDuration float64) models.UeFeatu
 		NewFlowRate: math.Round(flowRate*10000) / 10000,
 		FanOut:      math.Round(fanOut*10000) / 10000,
 		// Downlink features
-		DlPPS:     math.Round(dlPPS*10000) / 10000,
+		DlLogPPS:  math.Round(dlLogPPS*10000) / 10000,
 		DlAvgLen:  math.Round(dlAvgLen*10000) / 10000,
 		PPSRatio:  math.Round(ppsRatio*10000) / 10000,
 		ByteRatio: math.Round(byteRatio*10000) / 10000,

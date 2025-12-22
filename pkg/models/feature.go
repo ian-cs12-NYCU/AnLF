@@ -4,7 +4,7 @@ package models
 // This is the core data structure shared across ebpf, monitor, analyzer, and exporter
 type UeFeatureVector struct {
 	// Uplink features
-	LogPPS      float64 `json:"log_pps"`
+	UlLogPPS    float64 `json:"ul_log_pps"`
 	AvgLen      float64 `json:"ul_avg_len"`
 	IcmpRatio   float64 `json:"icmp_ratio"`
 	TcpRatio    float64 `json:"tcp_ratio"`
@@ -15,7 +15,7 @@ type UeFeatureVector struct {
 	FanOut      float64 `json:"fan_out"`
 
 	// Downlink features (Directional Symmetry & Protocol State)
-	DlPPS     float64 `json:"dl_pps"`     // Downlink packets per second
+	DlLogPPS  float64 `json:"dl_log_pps"` // Downlink log10(packets per second)
 	DlAvgLen  float64 `json:"dl_avg_len"` // Downlink average packet length
 	PPSRatio  float64 `json:"pps_ratio"`  // DL/UL PPS ratio
 	ByteRatio float64 `json:"byte_ratio"` // DL/UL byte ratio

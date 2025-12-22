@@ -100,20 +100,20 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 		dlActiveCount := 0 // For downlink-specific averages
 		for _, record := range batch.Records {
 			// Skip empty records (inactive UEs)
-			if record.UeFeatureVector.LogPPS == 0.0 &&
+			if record.UeFeatureVector.UlLogPPS == 0.0 &&
 				record.UeFeatureVector.AvgLen == 0.0 &&
 				record.UeFeatureVector.NewFlowRate == 0.0 {
 				continue
 			}
 			// Uplink global sums
-			sumLogPPS += record.UeFeatureVector.LogPPS
+			sumLogPPS += record.UeFeatureVector.UlLogPPS
 			sumFlowRate += record.UeFeatureVector.NewFlowRate
 			sumUlLen += record.UeFeatureVector.AvgLen
 			activeCount++
 
 			// Downlink global sums (only if UE has downlink traffic)
-			if record.UeFeatureVector.DlPPS > 0 {
-				sumDlPPS += record.UeFeatureVector.DlPPS
+			if record.UeFeatureVector.DlLogPPS > 0 {
+				sumDlPPS += record.UeFeatureVector.DlLogPPS
 				sumDlLen += record.UeFeatureVector.DlAvgLen
 				sumPPSRatio += record.UeFeatureVector.PPSRatio
 				sumByteRatio += record.UeFeatureVector.ByteRatio

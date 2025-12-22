@@ -47,7 +47,7 @@ func NewCsvExporter(baseDir string) (*CsvExporter, error) {
 	header := []string{
 		"timestamp", "supi", "ue_ip",
 		// PPS (uplink and downlink paired)
-		"log_pps", "dl_pps",
+		"ul_log_pps", "dl_log_pps",
 		// Packet length (uplink and downlink paired)
 		"ul_avg_len", "dl_avg_len",
 		// Traffic ratios
@@ -126,8 +126,8 @@ func (e *CsvExporter) exportRecord(rec *models.UeTrafficRecord) error {
 		rec.Supi,
 		rec.UeIp,
 		// PPS (uplink and downlink paired)
-		fmt.Sprintf("%.4f", rec.LogPPS),
-		fmt.Sprintf("%.4f", rec.DlPPS),
+		fmt.Sprintf("%.4f", rec.UlLogPPS),
+		fmt.Sprintf("%.4f", rec.DlLogPPS),
 		// Packet length (uplink and downlink paired)
 		fmt.Sprintf("%.4f", rec.AvgLen),
 		fmt.Sprintf("%.4f", rec.DlAvgLen),

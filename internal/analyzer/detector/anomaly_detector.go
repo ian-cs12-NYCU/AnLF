@@ -28,7 +28,7 @@ type AnomalyDetector struct {
 // isEmptyRecord checks if a UE traffic record has all feature values set to zero
 // Returns true if the record is empty (no traffic activity)
 func isEmptyRecord(record *models.UeTrafficRecord) bool {
-	return record.UeFeatureVector.LogPPS == 0.0 &&
+	return record.UeFeatureVector.UlLogPPS == 0.0 &&
 		record.UeFeatureVector.AvgLen == 0.0 &&
 		record.UeFeatureVector.IcmpRatio == 0.0 &&
 		record.UeFeatureVector.TcpRatio == 0.0 &&

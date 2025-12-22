@@ -148,7 +148,7 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 	}
 
 	// Replace UE-specific placeholders (uplink features)
-	userContent = replacePlaceholder(userContent, "log_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.LogPPS))
+	userContent = replacePlaceholder(userContent, "log_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.UlLogPPS))
 	userContent = replacePlaceholder(userContent, "ul_avg_len", fmt.Sprintf("%d", int(record.UeFeatureVector.AvgLen)))
 	userContent = replacePlaceholder(userContent, "flow_rate", fmt.Sprintf("%.2f", record.UeFeatureVector.NewFlowRate))
 	userContent = replacePlaceholder(userContent, "fan_out", fmt.Sprintf("%.2f", record.UeFeatureVector.FanOut))
@@ -157,7 +157,7 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 	userContent = replacePlaceholder(userContent, "rst_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.RstRatio))
 
 	// Replace downlink-specific placeholders (new features)
-	userContent = replacePlaceholder(userContent, "dl_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.DlPPS))
+	userContent = replacePlaceholder(userContent, "dl_pps", fmt.Sprintf("%.1f", record.UeFeatureVector.DlLogPPS))
 	userContent = replacePlaceholder(userContent, "dl_avg_len", fmt.Sprintf("%d", int(record.UeFeatureVector.DlAvgLen)))
 	userContent = replacePlaceholder(userContent, "pps_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.PPSRatio))
 	userContent = replacePlaceholder(userContent, "byte_ratio", fmt.Sprintf("%.3f", record.UeFeatureVector.ByteRatio))
