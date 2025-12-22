@@ -28,7 +28,7 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 	rec := &models.UeTrafficRecord{
 		UeFeatureVector: models.UeFeatureVector{
 			// Uplink features
-			LogPPS:      2.0,
+			UlLogPPS:    2.0,
 			AvgLen:      500.0,
 			TcpRatio:    0.8,
 			UdpRatio:    0.15,
@@ -38,7 +38,7 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 			NewFlowRate: 0.5,
 			FanOut:      0.3,
 			// Downlink features
-			DlPPS:     1000.0,
+			DlLogPPS:  1000.0,
 			DlAvgLen:  1400.0,
 			PPSRatio:  1.5,
 			ByteRatio: 2.8,
@@ -49,7 +49,7 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 		UeIp:              "10.60.100.1",
 		GlobalAvgPPS:      3.0,
 		GlobalAvgFlowRate: 0.4,
-		GlobalAvgLen:      450.0,
+		GlobalAvgUlLen:    450.0,
 	}
 
 	if err := exp.Export(rec); err != nil {
@@ -92,13 +92,13 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 		t.Errorf("Header missing expected columns: %s", lines[0])
 	}
 	// Check downlink features in header
-	if !strings.Contains(lines[0], "dl_pps") || !strings.Contains(lines[0], "dl_avg_len") {
+	if !strings.Contains(lines[0], "dl_log_pps") || !strings.Contains(lines[0], "dl_avg_len") {
 		t.Errorf("Header missing downlink feature columns: %s", lines[0])
 	}
 	if !strings.Contains(lines[0], "pps_ratio") || !strings.Contains(lines[0], "byte_ratio") || !strings.Contains(lines[0], "ack_ratio") {
 		t.Errorf("Header missing ratio columns: %s", lines[0])
 	}
-	if !strings.Contains(lines[0], "global_avg_pps") || !strings.Contains(lines[0], "global_avg_flow_rate") || !strings.Contains(lines[0], "global_avg_len") {
+	if !strings.Contains(lines[0], "global_avg_pps") || !strings.Contains(lines[0], "global_avg_ul_len") || !strings.Contains(lines[0], "global_avg_dl_pps") {
 		t.Errorf("Header missing global statistics columns: %s", lines[0])
 	}
 

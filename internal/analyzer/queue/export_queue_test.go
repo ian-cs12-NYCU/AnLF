@@ -37,7 +37,7 @@ func TestExportQueue_Basic(t *testing.T) {
 
 	record := &models.UeTrafficRecord{
 		UeFeatureVector: models.UeFeatureVector{
-			LogPPS: 3.5,
+			UlLogPPS: 3.5,
 		},
 		UeIp: "60.60.0.1",
 		Supi: "imsi-001010000000001",
@@ -78,7 +78,7 @@ func TestExportQueue_MultipleMessages(t *testing.T) {
 	for i := 0; i < messageCount; i++ {
 		record := &models.UeTrafficRecord{
 			UeFeatureVector: models.UeFeatureVector{
-				LogPPS: float64(i),
+				UlLogPPS: float64(i),
 			},
 			UeIp: "60.60.0.1",
 			Supi: "imsi-001010000000001",
@@ -104,7 +104,7 @@ func TestExportQueue_MultipleMessages(t *testing.T) {
 func TestExportMessage_TrafficRecord(t *testing.T) {
 	record := &models.UeTrafficRecord{
 		UeFeatureVector: models.UeFeatureVector{
-			LogPPS: 4.2,
+			UlLogPPS: 4.2,
 		},
 		UeIp:      "60.60.0.1",
 		Supi:      "imsi-001010000000001",
@@ -126,8 +126,8 @@ func TestExportMessage_TrafficRecord(t *testing.T) {
 		t.Errorf("Expected UE IP %s, got %s", record.UeIp, converted.UeIp)
 	}
 
-	if converted.LogPPS != record.LogPPS {
-		t.Errorf("Expected LogPPS %.2f, got %.2f", record.LogPPS, converted.LogPPS)
+	if converted.UlLogPPS != record.UlLogPPS {
+		t.Errorf("Expected LogPPS %.2f, got %.2f", record.UlLogPPS, converted.UlLogPPS)
 	}
 }
 

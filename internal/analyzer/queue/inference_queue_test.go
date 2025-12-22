@@ -43,14 +43,14 @@ func TestInferenceQueue_Basic(t *testing.T) {
 		Records: []*models.UeTrafficRecord{
 			{
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS: 3.5,
+					UlLogPPS: 3.5,
 				},
 				UeIp: "60.60.0.1",
 				Supi: "imsi-001010000000001",
 			},
 			{
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS: 4.2,
+					UlLogPPS: 4.2,
 				},
 				UeIp: "60.60.0.2",
 				Supi: "imsi-001010000000002",
@@ -111,21 +111,21 @@ func TestInferenceQueue_MultipleRecords(t *testing.T) {
 			Records: []*models.UeTrafficRecord{
 				{
 					UeFeatureVector: models.UeFeatureVector{
-						LogPPS: float64(i * 5),
+						UlLogPPS: float64(i * 5),
 					},
 					UeIp: "60.60.0.1",
 					Supi: "imsi-001010000000001",
 				},
 				{
 					UeFeatureVector: models.UeFeatureVector{
-						LogPPS: float64(i*5 + 1),
+						UlLogPPS: float64(i*5 + 1),
 					},
 					UeIp: "60.60.0.2",
 					Supi: "imsi-001010000000002",
 				},
 				{
 					UeFeatureVector: models.UeFeatureVector{
-						LogPPS: float64(i*5 + 2),
+						UlLogPPS: float64(i*5 + 2),
 					},
 					UeIp: "60.60.0.3",
 					Supi: "imsi-001010000000003",

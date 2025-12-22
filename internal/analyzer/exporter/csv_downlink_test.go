@@ -30,11 +30,11 @@ func TestCsvExporter_DownlinkFeatures(t *testing.T) {
 		// Normal download traffic (high byte ratio)
 		{
 			UeFeatureVector: models.UeFeatureVector{
-				LogPPS:    3.0,
+				UlLogPPS:  3.0,
 				AvgLen:    512.0,
 				TcpRatio:  0.9,
 				SynRatio:  0.05,
-				DlPPS:     5000.0,
+				DlLogPPS:  5000.0,
 				DlAvgLen:  1450.0, // Near MTU
 				PPSRatio:  1.2,
 				ByteRatio: 15.5, // High ratio = download
@@ -47,11 +47,11 @@ func TestCsvExporter_DownlinkFeatures(t *testing.T) {
 		// Attack traffic (asymmetric)
 		{
 			UeFeatureVector: models.UeFeatureVector{
-				LogPPS:    5.0,
+				UlLogPPS:  5.0,
 				AvgLen:    64.0,
 				TcpRatio:  0.8,
 				SynRatio:  0.7,
-				DlPPS:     100.0, // Very low
+				DlLogPPS:  100.0, // Very low
 				DlAvgLen:  80.0,  // Small packets
 				PPSRatio:  0.01,  // Asymmetric
 				ByteRatio: 0.005, // Very low
@@ -102,18 +102,18 @@ func TestCsvExporter_DownlinkFeatures(t *testing.T) {
 
 	// Verify header count
 	// 3 metadata (timestamp, supi, ue_ip) +
-	// 9 uplink (log_pps, avg_len, tcp_ratio, udp_ratio, icmp_ratio, syn_ratio, rst_ratio, new_flow_rate, fan_out) +
-	// 5 downlink (dl_pps, dl_avg_len_bytes, pps_ratio, byte_ratio, ack_ratio) +
-	// 3 global (global_avg_pps, global_avg_flow_rate, global_avg_len)
-	// = 20 columns total
-	expectedColumns := 20
+	// 9 uplink (ul_log_pps, ul_avg_len, tcp_ratio, udp_ratio, icmp_ratio, syn_ratio, rst_ratio, new_flow_rate, fan_out) +
+	// 5 downlink (dl_log_pps, dl_avg_len, pps_ratio, byte_ratio, ack_ratio) +
+	// 7 global (global_avg_pps, global_avg_flow_rate, global_avg_ul_len, global_avg_dl_pps, global_avg_dl_len, global_avg_pps_ratio, global_avg_byte_ratio)
+	// = 24 columns total
+	expectedColumns := 24
 	if len(rows[0]) != expectedColumns {
 		t.Errorf("Expected %d columns, got %d. Header: %v", expectedColumns, len(rows[0]), rows[0])
 	}
 
 	// Verify downlink columns exist
 	header := rows[0]
-	dlColumns := []string{"dl_pps", "dl_avg_len", "pps_ratio", "byte_ratio", "ack_ratio"}
+	dlColumns := []string{"dl_log_pps", "dl_avg_len", "pps_ratio", "byte_ratio", "ack_ratio"}
 	for _, col := range dlColumns {
 		found := false
 		for _, h := range header {

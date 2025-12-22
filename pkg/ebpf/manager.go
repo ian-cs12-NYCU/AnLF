@@ -174,27 +174,27 @@ func (m *Manager) ResetMetrics() error {
 
 func (m *Manager) Close() error {
 	var errs []error
-	
+
 	if m.xdpLink != nil {
 		if err := m.xdpLink.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing XDP link: %w", err))
 		}
 	}
-	
+
 	if m.tcFilter != nil {
 		if err := netlink.FilterDel(m.tcFilter); err != nil {
 			errs = append(errs, fmt.Errorf("closing TC filter: %w", err))
 		}
 	}
-	
+
 	if err := m.objs.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("closing objects: %w", err))
 	}
-	
+
 	if len(errs) > 0 {
 		return fmt.Errorf("errors closing manager: %v", errs)
 	}
-	
+
 	return nil
 }
 

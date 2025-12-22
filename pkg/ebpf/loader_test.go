@@ -26,7 +26,11 @@ func TestLoadAnlfObjects(t *testing.T) {
 		t.Fatal("AnlfXdpMain program is nil")
 	}
 
-	t.Logf("Successfully loaded eBPF program and maps")
+	if objs.AnlfTcEgress == nil {
+		t.Fatal("AnlfTcEgress program is nil")
+	}
+
+	t.Logf("Successfully loaded eBPF programs (XDP and TC) and maps")
 }
 
 // contains checks if a string contains a substring (case-insensitive)

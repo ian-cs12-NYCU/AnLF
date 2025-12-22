@@ -381,7 +381,7 @@ func TestAnomalyDetector_EmptyRecords(t *testing.T) {
 				Timestamp: time.Now().Unix(),
 				UeIp:      "60.60.0.1",
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS:      0.0,
+					UlLogPPS:      0.0,
 					AvgLen:      0.0,
 					TcpRatio:    0.0,
 					UdpRatio:    0.0,
@@ -398,7 +398,7 @@ func TestAnomalyDetector_EmptyRecords(t *testing.T) {
 				Timestamp: time.Now().Unix(),
 				UeIp:      "60.60.0.2",
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS:      3.5,
+					UlLogPPS:      3.5,
 					AvgLen:      600.0,
 					TcpRatio:    0.8,
 					UdpRatio:    0.15,
@@ -415,7 +415,7 @@ func TestAnomalyDetector_EmptyRecords(t *testing.T) {
 				Timestamp: time.Now().Unix(),
 				UeIp:      "60.60.0.3",
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS:      0.0,
+					UlLogPPS:      0.0,
 					AvgLen:      0.0,
 					TcpRatio:    0.0,
 					UdpRatio:    0.0,
@@ -464,7 +464,7 @@ func TestIsEmptyRecord(t *testing.T) {
 			name: "all zeros",
 			record: &models.UeTrafficRecord{
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS:      0.0,
+					UlLogPPS:      0.0,
 					AvgLen:      0.0,
 					IcmpRatio:   0.0,
 					TcpRatio:    0.0,
@@ -481,7 +481,7 @@ func TestIsEmptyRecord(t *testing.T) {
 			name: "has LogPPS",
 			record: &models.UeTrafficRecord{
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS:      3.5,
+					UlLogPPS:      3.5,
 					AvgLen:      0.0,
 					IcmpRatio:   0.0,
 					TcpRatio:    0.0,
@@ -498,7 +498,7 @@ func TestIsEmptyRecord(t *testing.T) {
 			name: "has AvgLen",
 			record: &models.UeTrafficRecord{
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS:      0.0,
+					UlLogPPS:      0.0,
 					AvgLen:      500.0,
 					IcmpRatio:   0.0,
 					TcpRatio:    0.0,
@@ -515,7 +515,7 @@ func TestIsEmptyRecord(t *testing.T) {
 			name: "all fields populated",
 			record: &models.UeTrafficRecord{
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS:      3.5,
+					UlLogPPS:      3.5,
 					AvgLen:      600.0,
 					IcmpRatio:   0.05,
 					TcpRatio:    0.8,
@@ -591,7 +591,7 @@ func TestAnomalyDetector_EnabledFieldInitialization(t *testing.T) {
 				UeIp: "60.60.0.1",
 				Supi: "imsi-208930000000001",
 				UeFeatureVector: models.UeFeatureVector{
-					LogPPS:   5.0,
+					UlLogPPS:   5.0,
 					AvgLen:   500.0,
 					TcpRatio: 0.8,
 				},

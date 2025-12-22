@@ -77,7 +77,7 @@ func TestLLMClient_PredictSingleUE_Success(t *testing.T) {
 		Supi:      "imsi-001010000000001",
 		Timestamp: 1234567890,
 		UeFeatureVector: models.UeFeatureVector{
-			LogPPS:      3.5,
+			UlLogPPS:      3.5,
 			AvgLen:      600,
 			NewFlowRate: 0.1,
 			FanOut:      0.5,
@@ -118,7 +118,7 @@ func TestLLMClient_PredictSingleUESingleUE_ServerError(t *testing.T) {
 		Supi:      "imsi-001010000000001",
 		Timestamp: 1234567890,
 		UeFeatureVector: models.UeFeatureVector{
-			LogPPS: 3.5,
+			UlLogPPS: 3.5,
 			AvgLen: 600,
 		},
 	}
@@ -146,7 +146,7 @@ func TestLLMClient_PredictSingleUESingleUE_Timeout(t *testing.T) {
 		Supi:      "imsi-001010000000001",
 		Timestamp: 1234567890,
 		UeFeatureVector: models.UeFeatureVector{
-			LogPPS: 3.5,
+			UlLogPPS: 3.5,
 			AvgLen: 600,
 		},
 	}
