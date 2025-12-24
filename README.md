@@ -70,16 +70,38 @@ configuration:
 
 ## Run
 
+### Option 1: Simple Run (Recommended for Development)
 ```bash
-# Basic run
-sudo ./bin/anlf -c config/anlfcfg.yaml
-
-# With logging
-sudo ./bin/anlf -c config/anlfcfg.yaml -l log/anlf.log
-
-# Or use make
 make run
 ```
+- Executes with `sudo` automatically
+- Auto-fixes file permissions after execution
+- Output files owned by your user (not root)
+
+### Option 2: Non-sudo with Capabilities (Recommended for Production)
+```bash
+# One-time setup
+make cap-setup
+
+# Then run without sudo
+make run-cap
+```
+- Requires one-time capability setup
+- No `sudo` needed afterward
+- More secure (minimal required permissions)
+- Output files owned by your user
+
+### Manual Run
+```bash
+sudo ./bin/anlf -c config/anlfcfg.yaml
+```
+
+### Why sudo/capabilities?
+ANLF uses eBPF to capture network traffic on the `upfgtp` interface, which requires elevated privileges:
+- **cap_bpf, cap_perfmon** - eBPF program loading and monitoring
+- **cap_sys_resource** - Memory management for BPF objects
+- **cap_sys_admin** - Administrative operations
+- **cap_net_admin** - Network filter operations (TC - Traffic Control)
 
 ## Verify Registration
 

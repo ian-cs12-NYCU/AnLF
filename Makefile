@@ -47,7 +47,39 @@ test:
 	@go test -v ./...
 
 run:
+	@mkdir -p output
+	@echo "Running ANLF (as root)..."
 	@sudo ./bin/anlf -c config/anlfcfg.yaml
+	@if [ -d output ]; then echo "Fixing output directory permissions..."; sudo chown -R $$(id -u):$$(id -g) output 2>/dev/null; echo "✓ Output directory now owned by $(shell whoami)"; fi
+
+# Alternative: Run with Linux capabilities instead of sudo (requires one-time setup)
+run-cap: build
+	@mkdir -p output
+	@echo "Setting up capabilities for eBPF and TC operations..."
+	@sudo setcap cap_bpf,cap_perfmon,cap_sys_resource,cap_sys_admin,cap_net_admin=ep ./bin/anlf
+	@echo "Running ANLF without sudo (using capabilities)..."
+	@./bin/anlf -c config/anlfcfg.yaml
+
+.PHONY: cap-setup
+cap-setup:
+	@echo "Setting up capabilities for eBPF and TC operations..."
+	@sudo setcap cap_bpf,cap_perfmon,cap_sys_resource,cap_sys_admin,cap_net_admin=ep ./bin/anlf
+	@echo "✓ Capabilities set successfully"
+	@echo "   Capabilities: cap_bpf, cap_perfmon, cap_sys_resource, cap_sys_admin, cap_net_admin"
+	@echo "   You can now run 'make run-cap' without sudo"
+	@echo "   To verify: getcap ./bin/anlf"
+
+.PHONY: cap-revoke
+cap-revoke:
+	@echo "Revoking capabilities from binary..."
+	@sudo setcap -r ./bin/anlf
+	@echo "✓ Capabilities revoked"
+
+.PHONY: fix-perms
+fix-perms:
+	@echo "Fixing output directory permissions..."
+	@sudo chown -R $$(id -u):$$(id -g) output 2>/dev/null
+	@echo "✓ Output directory now owned by $(shell whoami)"
 
 run-log:
 	@sudo ./bin/anlf -c config/anlfcfg.yaml -l log/anlf.log
