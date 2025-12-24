@@ -47,9 +47,10 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 		Timestamp:         time.Now().Unix(),
 		Supi:              "imsi-208930000000001",
 		UeIp:              "10.60.100.1",
-		GlobalAvgPPS:      3.0,
-		GlobalAvgFlowRate: 0.4,
-		GlobalAvgUlLen:    450.0,
+		GlobalUlLogPPS:    3.0,
+		GlobalNewFlowRate: 0.4,
+		GlobalUlAvgLen:    450.0,
+		GlobalFanOut:      0.25,
 	}
 
 	if err := exp.Export(rec); err != nil {
@@ -98,7 +99,7 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 	if !strings.Contains(lines[0], "pps_ratio") || !strings.Contains(lines[0], "byte_ratio") || !strings.Contains(lines[0], "ack_ratio") {
 		t.Errorf("Header missing ratio columns: %s", lines[0])
 	}
-	if !strings.Contains(lines[0], "global_avg_pps") || !strings.Contains(lines[0], "global_avg_ul_len") || !strings.Contains(lines[0], "global_avg_dl_pps") {
+	if !strings.Contains(lines[0], "global_ul_log_pps") || !strings.Contains(lines[0], "global_ul_avg_len") || !strings.Contains(lines[0], "global_fan_out") {
 		t.Errorf("Header missing global statistics columns: %s", lines[0])
 	}
 

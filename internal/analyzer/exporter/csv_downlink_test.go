@@ -102,11 +102,19 @@ func TestCsvExporter_DownlinkFeatures(t *testing.T) {
 
 	// Verify header count
 	// 3 metadata (timestamp, supi, ue_ip) +
-	// 9 uplink (ul_log_pps, ul_avg_len, tcp_ratio, udp_ratio, icmp_ratio, syn_ratio, rst_ratio, new_flow_rate, fan_out) +
-	// 5 downlink (dl_log_pps, dl_avg_len, pps_ratio, byte_ratio, ack_ratio) +
-	// 7 global (global_avg_pps, global_avg_flow_rate, global_avg_ul_len, global_avg_dl_pps, global_avg_dl_len, global_avg_pps_ratio, global_avg_byte_ratio)
-	// = 24 columns total
-	expectedColumns := 24
+	// 2 pairs uplink PPS (ul_log_pps, global_ul_log_pps) +
+	// 2 pairs downlink PPS (dl_log_pps, global_dl_log_pps) +
+	// 2 pairs uplink length (ul_avg_len, global_ul_avg_len) +
+	// 2 pairs downlink length (dl_avg_len, global_dl_avg_len) +
+	// 2 pairs PPS ratio (pps_ratio, global_pps_ratio) +
+	// 2 pairs byte ratio (byte_ratio, global_byte_ratio) +
+	// 3 protocol (tcp_ratio, udp_ratio, icmp_ratio) +
+	// 2 TCP flags (syn_ratio, rst_ratio) +
+	// 2 pairs flow rate (new_flow_rate, global_new_flow_rate) +
+	// 2 pairs fan out (fan_out, global_fan_out) +
+	// 1 downlink ACK (ack_ratio)
+	// = 25 columns total
+	expectedColumns := 25
 	if len(rows[0]) != expectedColumns {
 		t.Errorf("Expected %d columns, got %d. Header: %v", expectedColumns, len(rows[0]), rows[0])
 	}

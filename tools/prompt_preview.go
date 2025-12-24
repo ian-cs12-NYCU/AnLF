@@ -97,13 +97,14 @@ func generateSampleRecord() *models.UeTrafficRecord {
 func generateSampleGlobalStats() *models.GlobalNetworkStats {
 	// Generate sample global network statistics
 	return &models.GlobalNetworkStats{
-		AvgLogPPS:    3.2,   // Average log10(PPS) across all UEs (uplink)
-		AvgFlowRate:  0.3,   // Average new flow rate (uplink)
-		AvgUlLen:     650.0, // Average uplink packet size
-		AvgDlPPS:     500.0, // Average downlink PPS
-		AvgDlLen:     800.0, // Average downlink packet size
-		AvgPPSRatio:  1.2,   // Average DL/UL PPS ratio
-		AvgByteRatio: 1.5,   // Average DL/UL byte ratio
+		AvgUlLogPPS:    3.2,   // Average log10(PPS) across all UEs (uplink)
+		AvgDlLogPPS:    2.7,   // Average log10(PPS) across all UEs (downlink)
+		AvgNewFlowRate: 0.3,   // Average new flow rate
+		AvgUlLen:       650.0, // Average uplink packet size
+		AvgDlLen:       800.0, // Average downlink packet size
+		AvgPPSRatio:    1.2,   // Average DL/UL PPS ratio
+		AvgByteRatio:   1.5,   // Average DL/UL byte ratio
+		AvgFanOut:      0.2,   // Average fan out
 	}
 }
 

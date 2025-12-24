@@ -102,3 +102,15 @@ curl http://127.0.0.10:8000/nnrf-nfm/v1/nf-instances
 - free5gc/util
 - gin-gonic/gin
 
+## Documentation
+
+Detailed documentation is available in the `docs/` directory:
+
+- [Architecture](docs/architecture.md) - System architecture, data flow, and global metrics
+- [eBPF Implementation](docs/eBPF.md) - eBPF kernel-side implementation details
+- [Export Queue](docs/EXPORT_QUEUE.md) - Message queue architecture for data export
+- [LLM Integration](docs/LLM.md) - LLM-based anomaly detection
+- [LLM Server](docs/LLM_server.md) - LLM server setup and configuration
+- [Risk Scoring](docs/RISK_SCORING.md) - CUSUM-based risk scoring mechanism
+- [Graceful Shutdown](docs/GRACEFUL_SHUTDOWN.md) - Component lifecycle management
+- [Testing eBPF](docs/TESTING_EBPF.md) - eBPF testing procedures

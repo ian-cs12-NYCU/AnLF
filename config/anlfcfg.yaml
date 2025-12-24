@@ -43,5 +43,5 @@ configuration:
 
 logger:
   enable: true
-  level: debug
+  level: info
   reportCaller: false

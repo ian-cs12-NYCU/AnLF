@@ -46,24 +46,24 @@ func NewCsvExporter(baseDir string) (*CsvExporter, error) {
 	// Write header
 	header := []string{
 		"timestamp", "supi", "ue_ip",
-		// PPS (uplink and downlink paired)
-		"ul_log_pps", "dl_log_pps",
-		// Packet length (uplink and downlink paired)
-		"ul_avg_len", "dl_avg_len",
-		// Traffic ratios
-		"pps_ratio", "byte_ratio",
+		// PPS (uplink and downlink paired with global values)
+		"ul_log_pps", "global_ul_log_pps",
+		"dl_log_pps", "global_dl_log_pps",
+		// Packet length (uplink and downlink paired with global values)
+		"ul_avg_len", "global_ul_avg_len",
+		"dl_avg_len", "global_dl_avg_len",
+		// Traffic ratios (with global values)
+		"pps_ratio", "global_pps_ratio",
+		"byte_ratio", "global_byte_ratio",
 		// Protocol ratios
 		"tcp_ratio", "udp_ratio", "icmp_ratio",
 		// TCP flags
 		"syn_ratio", "rst_ratio",
-		// Flow characteristics
-		"new_flow_rate", "fan_out",
+		// Flow characteristics (with global values)
+		"new_flow_rate", "global_new_flow_rate",
+		"fan_out", "global_fan_out",
 		// Downlink-specific
 		"ack_ratio",
-		// Global context (uplink)
-		"global_avg_pps", "global_avg_flow_rate", "global_avg_ul_len",
-		// Global context (downlink)
-		"global_avg_dl_pps", "global_avg_dl_len", "global_avg_pps_ratio", "global_avg_byte_ratio",
 	}
 	if err := writer.Write(header); err != nil {
 		file.Close()
@@ -125,15 +125,21 @@ func (e *CsvExporter) exportRecord(rec *models.UeTrafficRecord) error {
 		strconv.FormatInt(rec.Timestamp, 10),
 		rec.Supi,
 		rec.UeIp,
-		// PPS (uplink and downlink paired)
+		// PPS (uplink and downlink paired with global values)
 		fmt.Sprintf("%.4f", rec.UlLogPPS),
+		fmt.Sprintf("%.4f", rec.GlobalUlLogPPS),
 		fmt.Sprintf("%.4f", rec.DlLogPPS),
-		// Packet length (uplink and downlink paired)
+		fmt.Sprintf("%.4f", rec.GlobalDlLogPPS),
+		// Packet length (uplink and downlink paired with global values)
 		fmt.Sprintf("%.4f", rec.AvgLen),
+		fmt.Sprintf("%.4f", rec.GlobalUlAvgLen),
 		fmt.Sprintf("%.4f", rec.DlAvgLen),
-		// Traffic ratios
+		fmt.Sprintf("%.4f", rec.GlobalDlAvgLen),
+		// Traffic ratios (with global values)
 		fmt.Sprintf("%.4f", rec.PPSRatio),
+		fmt.Sprintf("%.4f", rec.GlobalPPSRatio),
 		fmt.Sprintf("%.4f", rec.ByteRatio),
+		fmt.Sprintf("%.4f", rec.GlobalByteRatio),
 		// Protocol ratios
 		fmt.Sprintf("%.4f", rec.TcpRatio),
 		fmt.Sprintf("%.4f", rec.UdpRatio),
@@ -141,20 +147,13 @@ func (e *CsvExporter) exportRecord(rec *models.UeTrafficRecord) error {
 		// TCP flags
 		fmt.Sprintf("%.4f", rec.SynRatio),
 		fmt.Sprintf("%.4f", rec.RstRatio),
-		// Flow characteristics
+		// Flow characteristics (with global values)
 		fmt.Sprintf("%.4f", rec.NewFlowRate),
+		fmt.Sprintf("%.4f", rec.GlobalNewFlowRate),
 		fmt.Sprintf("%.4f", rec.FanOut),
+		fmt.Sprintf("%.4f", rec.GlobalFanOut),
 		// Downlink-specific
 		fmt.Sprintf("%.4f", rec.AckRatio),
-		// Global context (uplink)
-		fmt.Sprintf("%.4f", rec.GlobalAvgPPS),
-		fmt.Sprintf("%.4f", rec.GlobalAvgFlowRate),
-		fmt.Sprintf("%.4f", rec.GlobalAvgUlLen),
-		// Global context (downlink)
-		fmt.Sprintf("%.4f", rec.GlobalAvgDlPPS),
-		fmt.Sprintf("%.4f", rec.GlobalAvgDlLen),
-		fmt.Sprintf("%.4f", rec.GlobalAvgPPSRatio),
-		fmt.Sprintf("%.4f", rec.GlobalAvgByteRatio),
 	}
 
 	if err := e.writer.Write(row); err != nil {

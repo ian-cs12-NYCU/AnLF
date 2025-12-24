@@ -100,11 +100,12 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 	// Replace global statistics placeholders in system prompt (if globalStats provided)
 	if globalStats != nil {
 		// Uplink global stats
-		systemContent = replacePlaceholder(systemContent, "global_avg_pps", fmt.Sprintf("%.2f", globalStats.AvgLogPPS))
-		systemContent = replacePlaceholder(systemContent, "global_avg_flow", fmt.Sprintf("%.2f", globalStats.AvgFlowRate))
+		systemContent = replacePlaceholder(systemContent, "global_avg_pps", fmt.Sprintf("%.2f", globalStats.AvgUlLogPPS))
+		systemContent = replacePlaceholder(systemContent, "global_avg_flow", fmt.Sprintf("%.2f", globalStats.AvgNewFlowRate))
 		systemContent = replacePlaceholder(systemContent, "global_avg_ul_len", fmt.Sprintf("%.0f", globalStats.AvgUlLen))
+		systemContent = replacePlaceholder(systemContent, "global_avg_fan_out", fmt.Sprintf("%.2f", globalStats.AvgFanOut))
 		// Downlink global stats
-		systemContent = replacePlaceholder(systemContent, "global_avg_dl_pps", fmt.Sprintf("%.2f", globalStats.AvgDlPPS))
+		systemContent = replacePlaceholder(systemContent, "global_avg_dl_pps", fmt.Sprintf("%.2f", globalStats.AvgDlLogPPS))
 		systemContent = replacePlaceholder(systemContent, "global_avg_dl_len", fmt.Sprintf("%.0f", globalStats.AvgDlLen))
 		systemContent = replacePlaceholder(systemContent, "global_avg_pps_ratio", fmt.Sprintf("%.2f", globalStats.AvgPPSRatio))
 		systemContent = replacePlaceholder(systemContent, "global_avg_byte_ratio", fmt.Sprintf("%.2f", globalStats.AvgByteRatio))
@@ -113,6 +114,7 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 		systemContent = replacePlaceholder(systemContent, "global_avg_pps", "N/A")
 		systemContent = replacePlaceholder(systemContent, "global_avg_flow", "N/A")
 		systemContent = replacePlaceholder(systemContent, "global_avg_ul_len", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_avg_fan_out", "N/A")
 		systemContent = replacePlaceholder(systemContent, "global_avg_dl_pps", "N/A")
 		systemContent = replacePlaceholder(systemContent, "global_avg_dl_len", "N/A")
 		systemContent = replacePlaceholder(systemContent, "global_avg_pps_ratio", "N/A")

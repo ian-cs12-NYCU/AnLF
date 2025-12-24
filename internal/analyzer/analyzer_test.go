@@ -60,7 +60,7 @@ func TestFlowAnalyzer_GlobalStats_ActiveUsersOnly(t *testing.T) {
 				UeIp: "60.60.0.1",
 				Supi: "imsi-001010000000001",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      4.0,
+					UlLogPPS:    4.0,
 					AvgLen:      800.0,
 					NewFlowRate: 0.2,
 				},
@@ -70,7 +70,7 @@ func TestFlowAnalyzer_GlobalStats_ActiveUsersOnly(t *testing.T) {
 				UeIp: "60.60.0.2",
 				Supi: "imsi-001010000000002",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      2.0,
+					UlLogPPS:    2.0,
 					AvgLen:      400.0,
 					NewFlowRate: 0.1,
 				},
@@ -80,7 +80,7 @@ func TestFlowAnalyzer_GlobalStats_ActiveUsersOnly(t *testing.T) {
 				UeIp: "60.60.0.3",
 				Supi: "imsi-001010000000003",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      0.0,
+					UlLogPPS:    0.0,
 					AvgLen:      0.0,
 					NewFlowRate: 0.0,
 				},
@@ -90,7 +90,7 @@ func TestFlowAnalyzer_GlobalStats_ActiveUsersOnly(t *testing.T) {
 				UeIp: "60.60.0.4",
 				Supi: "imsi-001010000000004",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      0.0,
+					UlLogPPS:    0.0,
 					AvgLen:      0.0,
 					NewFlowRate: 0.0,
 				},
@@ -110,17 +110,22 @@ func TestFlowAnalyzer_GlobalStats_ActiveUsersOnly(t *testing.T) {
 	expectedAvgPPS := (4.0 + 2.0) / 2.0     // Should be 3.0 (only active UEs)
 	expectedAvgFlow := (0.2 + 0.1) / 2.0    // Should be 0.15
 	expectedAvgLen := (800.0 + 400.0) / 2.0 // Should be 600.0
+	expectedAvgFanOut := (0.0 + 0.0) / 2.0  // Should be 0.0 (no fan_out in test data)
 
-	if math.Abs(batch.GlobalStats.AvgLogPPS-expectedAvgPPS) > floatTolerance {
-		t.Errorf("Expected AvgLogPPS %.2f (from 2 active UEs), got %.2f", expectedAvgPPS, batch.GlobalStats.AvgLogPPS)
+	if math.Abs(batch.GlobalStats.AvgUlLogPPS-expectedAvgPPS) > floatTolerance {
+		t.Errorf("Expected AvgUlLogPPS %.2f (from 2 active UEs), got %.2f", expectedAvgPPS, batch.GlobalStats.AvgUlLogPPS)
 	}
 
-	if math.Abs(batch.GlobalStats.AvgFlowRate-expectedAvgFlow) > floatTolerance {
-		t.Errorf("Expected AvgFlowRate %.2f (from 2 active UEs), got %.2f", expectedAvgFlow, batch.GlobalStats.AvgFlowRate)
+	if math.Abs(batch.GlobalStats.AvgNewFlowRate-expectedAvgFlow) > floatTolerance {
+		t.Errorf("Expected AvgNewFlowRate %.2f (from 2 active UEs), got %.2f", expectedAvgFlow, batch.GlobalStats.AvgNewFlowRate)
 	}
 
 	if math.Abs(batch.GlobalStats.AvgUlLen-expectedAvgLen) > floatTolerance {
-		t.Errorf("Expected AvgLen %.0f (from 2 active UEs), got %.0f", expectedAvgLen, batch.GlobalStats.AvgUlLen)
+		t.Errorf("Expected AvgUlLen %.0f (from 2 active UEs), got %.0f", expectedAvgLen, batch.GlobalStats.AvgUlLen)
+	}
+
+	if math.Abs(batch.GlobalStats.AvgFanOut-expectedAvgFanOut) > floatTolerance {
+		t.Errorf("Expected AvgFanOut %.2f (from 2 active UEs), got %.2f", expectedAvgFanOut, batch.GlobalStats.AvgFanOut)
 	}
 
 	t.Log("✓ Global stats correctly calculated from only active UEs")
@@ -155,7 +160,7 @@ func TestFlowAnalyzer_GlobalStats_NoActiveUsers(t *testing.T) {
 				UeIp: "60.60.0.1",
 				Supi: "imsi-001010000000001",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      0.0,
+					UlLogPPS:    0.0,
 					AvgLen:      0.0,
 					NewFlowRate: 0.0,
 				},
@@ -164,7 +169,7 @@ func TestFlowAnalyzer_GlobalStats_NoActiveUsers(t *testing.T) {
 				UeIp: "60.60.0.2",
 				Supi: "imsi-001010000000002",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      0.0,
+					UlLogPPS:    0.0,
 					AvgLen:      0.0,
 					NewFlowRate: 0.0,
 				},
@@ -213,7 +218,7 @@ func TestFlowAnalyzer_GlobalStats_AllActiveUsers(t *testing.T) {
 				UeIp: "60.60.0.1",
 				Supi: "imsi-001010000000001",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      3.0,
+					UlLogPPS:    3.0,
 					AvgLen:      500.0,
 					NewFlowRate: 0.15,
 				},
@@ -222,7 +227,7 @@ func TestFlowAnalyzer_GlobalStats_AllActiveUsers(t *testing.T) {
 				UeIp: "60.60.0.2",
 				Supi: "imsi-001010000000002",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      5.0,
+					UlLogPPS:    5.0,
 					AvgLen:      700.0,
 					NewFlowRate: 0.25,
 				},
@@ -243,16 +248,16 @@ func TestFlowAnalyzer_GlobalStats_AllActiveUsers(t *testing.T) {
 	expectedAvgFlow := (0.15 + 0.25) / 2.0  // Should be 0.2
 	expectedAvgLen := (500.0 + 700.0) / 2.0 // Should be 600.0
 
-	if math.Abs(batch.GlobalStats.AvgLogPPS-expectedAvgPPS) > floatTolerance {
-		t.Errorf("Expected AvgLogPPS %.2f, got %.2f", expectedAvgPPS, batch.GlobalStats.AvgLogPPS)
+	if math.Abs(batch.GlobalStats.AvgUlLogPPS-expectedAvgPPS) > floatTolerance {
+		t.Errorf("Expected AvgUlLogPPS %.2f, got %.2f", expectedAvgPPS, batch.GlobalStats.AvgUlLogPPS)
 	}
 
-	if math.Abs(batch.GlobalStats.AvgFlowRate-expectedAvgFlow) > floatTolerance {
-		t.Errorf("Expected AvgFlowRate %.2f, got %.2f", expectedAvgFlow, batch.GlobalStats.AvgFlowRate)
+	if math.Abs(batch.GlobalStats.AvgNewFlowRate-expectedAvgFlow) > floatTolerance {
+		t.Errorf("Expected AvgNewFlowRate %.2f, got %.2f", expectedAvgFlow, batch.GlobalStats.AvgNewFlowRate)
 	}
 
 	if math.Abs(batch.GlobalStats.AvgUlLen-expectedAvgLen) > floatTolerance {
-		t.Errorf("Expected AvgLen %.0f, got %.0f", expectedAvgLen, batch.GlobalStats.AvgUlLen)
+		t.Errorf("Expected AvgUlLen %.0f, got %.0f", expectedAvgLen, batch.GlobalStats.AvgUlLen)
 	}
 
 	t.Log("✓ Global stats correctly calculated from all active UEs")
@@ -287,7 +292,7 @@ func TestFlowAnalyzer_RecordGlobalStatsPopulation(t *testing.T) {
 				UeIp: "60.60.0.1",
 				Supi: "imsi-001010000000001",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      4.0,
+					UlLogPPS:    4.0,
 					AvgLen:      800.0,
 					NewFlowRate: 0.2,
 				},
@@ -296,7 +301,7 @@ func TestFlowAnalyzer_RecordGlobalStatsPopulation(t *testing.T) {
 				UeIp: "60.60.0.2",
 				Supi: "imsi-001010000000002",
 				UeFeatureVector: models.UeFeatureVector{
-					UlLogPPS:      2.0,
+					UlLogPPS:    2.0,
 					AvgLen:      400.0,
 					NewFlowRate: 0.1,
 				},
@@ -312,18 +317,23 @@ func TestFlowAnalyzer_RecordGlobalStatsPopulation(t *testing.T) {
 	expectedAvgPPS := (4.0 + 2.0) / 2.0     // Should be 3.0
 	expectedAvgFlow := (0.2 + 0.1) / 2.0    // Should be 0.15
 	expectedAvgLen := (800.0 + 400.0) / 2.0 // Should be 600.0
+	expectedAvgFanOut := 0.0                // Should be 0.0 (no fan_out in test data)
 
 	for i, record := range batch.Records {
-		if math.Abs(record.GlobalAvgPPS-expectedAvgPPS) > floatTolerance {
-			t.Errorf("Record %d: Expected GlobalAvgPPS %.2f, got %.2f", i, expectedAvgPPS, record.GlobalAvgPPS)
+		if math.Abs(record.GlobalUlLogPPS-expectedAvgPPS) > floatTolerance {
+			t.Errorf("Record %d: Expected GlobalUlLogPPS %.2f, got %.2f", i, expectedAvgPPS, record.GlobalUlLogPPS)
 		}
 
-		if math.Abs(record.GlobalAvgFlowRate-expectedAvgFlow) > floatTolerance {
-			t.Errorf("Record %d: Expected GlobalAvgFlowRate %.2f, got %.2f", i, expectedAvgFlow, record.GlobalAvgFlowRate)
+		if math.Abs(record.GlobalNewFlowRate-expectedAvgFlow) > floatTolerance {
+			t.Errorf("Record %d: Expected GlobalNewFlowRate %.2f, got %.2f", i, expectedAvgFlow, record.GlobalNewFlowRate)
 		}
 
-		if math.Abs(record.GlobalAvgUlLen-expectedAvgLen) > floatTolerance {
-			t.Errorf("Record %d: Expected GlobalAvgUlLen %.0f, got %.0f", i, expectedAvgLen, record.GlobalAvgUlLen)
+		if math.Abs(record.GlobalUlAvgLen-expectedAvgLen) > floatTolerance {
+			t.Errorf("Record %d: Expected GlobalUlAvgLen %.0f, got %.0f", i, expectedAvgLen, record.GlobalUlAvgLen)
+		}
+
+		if math.Abs(record.GlobalFanOut-expectedAvgFanOut) > floatTolerance {
+			t.Errorf("Record %d: Expected GlobalFanOut %.2f, got %.2f", i, expectedAvgFanOut, record.GlobalFanOut)
 		}
 	}
 

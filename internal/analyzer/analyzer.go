@@ -95,7 +95,7 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 
 	// Calculate global network statistics (avg across active UEs only)
 	if batch.BatchSize > 0 {
-		var sumLogPPS, sumFlowRate, sumUlLen, sumDlPPS, sumDlLen, sumPPSRatio, sumByteRatio float64
+		var sumUlLogPPS, sumDlLogPPS, sumUlLen, sumDlLen, sumPPSRatio, sumByteRatio, sumNewFlowRate, sumFanOut float64
 		activeCount := 0
 		dlActiveCount := 0 // For downlink-specific averages
 		for _, record := range batch.Records {
@@ -106,14 +106,15 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 				continue
 			}
 			// Uplink global sums
-			sumLogPPS += record.UeFeatureVector.UlLogPPS
-			sumFlowRate += record.UeFeatureVector.NewFlowRate
+			sumUlLogPPS += record.UeFeatureVector.UlLogPPS
+			sumNewFlowRate += record.UeFeatureVector.NewFlowRate
 			sumUlLen += record.UeFeatureVector.AvgLen
+			sumFanOut += record.UeFeatureVector.FanOut
 			activeCount++
 
 			// Downlink global sums (only if UE has downlink traffic)
 			if record.UeFeatureVector.DlLogPPS > 0 {
-				sumDlPPS += record.UeFeatureVector.DlLogPPS
+				sumDlLogPPS += record.UeFeatureVector.DlLogPPS
 				sumDlLen += record.UeFeatureVector.DlAvgLen
 				sumPPSRatio += record.UeFeatureVector.PPSRatio
 				sumByteRatio += record.UeFeatureVector.ByteRatio
@@ -122,21 +123,22 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 		}
 		if activeCount > 0 {
 			batch.GlobalStats = &models.GlobalNetworkStats{
-				AvgLogPPS:   sumLogPPS / float64(activeCount),
-				AvgFlowRate: sumFlowRate / float64(activeCount),
-				AvgUlLen:    sumUlLen / float64(activeCount),
+				AvgUlLogPPS:    sumUlLogPPS / float64(activeCount),
+				AvgNewFlowRate: sumNewFlowRate / float64(activeCount),
+				AvgUlLen:       sumUlLen / float64(activeCount),
+				AvgFanOut:      sumFanOut / float64(activeCount),
 			}
 			// Only set downlink averages if we have downlink-active UEs
 			if dlActiveCount > 0 {
-				batch.GlobalStats.AvgDlPPS = sumDlPPS / float64(dlActiveCount)
+				batch.GlobalStats.AvgDlLogPPS = sumDlLogPPS / float64(dlActiveCount)
 				batch.GlobalStats.AvgDlLen = sumDlLen / float64(dlActiveCount)
 				batch.GlobalStats.AvgPPSRatio = sumPPSRatio / float64(dlActiveCount)
 				batch.GlobalStats.AvgByteRatio = sumByteRatio / float64(dlActiveCount)
 			}
-			logger.AnalyzerLog.Debugf("[Poll #%d] Global Stats (from %d UL active, %d DL active): UL[PPS=%.2f, Flow=%.2f, Len=%.0f] DL[PPS=%.2f, Len=%.0f, Ratio=%.2f/%.2f]",
+			logger.AnalyzerLog.Debugf("[Poll #%d] Global Stats (from %d UL active, %d DL active): UL[LogPPS=%.2f, Flow=%.2f, Len=%.0f, FanOut=%.2f] DL[LogPPS=%.2f, Len=%.0f, Ratio=%.2f/%.2f]",
 				batch.PollID, activeCount, dlActiveCount,
-				batch.GlobalStats.AvgLogPPS, batch.GlobalStats.AvgFlowRate, batch.GlobalStats.AvgUlLen,
-				batch.GlobalStats.AvgDlPPS, batch.GlobalStats.AvgDlLen, batch.GlobalStats.AvgPPSRatio, batch.GlobalStats.AvgByteRatio)
+				batch.GlobalStats.AvgUlLogPPS, batch.GlobalStats.AvgNewFlowRate, batch.GlobalStats.AvgUlLen, batch.GlobalStats.AvgFanOut,
+				batch.GlobalStats.AvgDlLogPPS, batch.GlobalStats.AvgDlLen, batch.GlobalStats.AvgPPSRatio, batch.GlobalStats.AvgByteRatio)
 		}
 	}
 
@@ -145,13 +147,14 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 		record.PollID = batch.PollID
 		// Fill in global statistics from batch to each record for CSV export
 		if batch.GlobalStats != nil {
-			record.GlobalAvgPPS = batch.GlobalStats.AvgLogPPS
-			record.GlobalAvgFlowRate = batch.GlobalStats.AvgFlowRate
-			record.GlobalAvgUlLen = batch.GlobalStats.AvgUlLen
-			record.GlobalAvgDlPPS = batch.GlobalStats.AvgDlPPS
-			record.GlobalAvgDlLen = batch.GlobalStats.AvgDlLen
-			record.GlobalAvgPPSRatio = batch.GlobalStats.AvgPPSRatio
-			record.GlobalAvgByteRatio = batch.GlobalStats.AvgByteRatio
+			record.GlobalUlLogPPS = batch.GlobalStats.AvgUlLogPPS
+			record.GlobalDlLogPPS = batch.GlobalStats.AvgDlLogPPS
+			record.GlobalUlAvgLen = batch.GlobalStats.AvgUlLen
+			record.GlobalDlAvgLen = batch.GlobalStats.AvgDlLen
+			record.GlobalPPSRatio = batch.GlobalStats.AvgPPSRatio
+			record.GlobalByteRatio = batch.GlobalStats.AvgByteRatio
+			record.GlobalNewFlowRate = batch.GlobalStats.AvgNewFlowRate
+			record.GlobalFanOut = batch.GlobalStats.AvgFanOut
 		}
 		logger.AnalyzerLog.Debugf("[Poll #%d] Received traffic record for UE %s (SUPI: %s)", batch.PollID, record.UeIp, record.Supi)
 	}

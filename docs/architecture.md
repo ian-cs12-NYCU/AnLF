@@ -485,15 +485,14 @@ graph TB
     style LLM fill:#ffaaaa
 ```
 
-## 6.1 CSV 輸出格式 ✨ **更新 (2025-12-17)**
+## 6.1 CSV 輸出格式 ✨ **更新 (2025-12-24)**
 
 ### Traffic CSV 格式
 CsvExporter 輸出的 traffic_*.csv 檔案包含以下欄位：
 
 ```csv
-timestamp,supi,ue_ip,log_pps,avg_len,tcp_ratio,udp_ratio,icmp_ratio,syn_ratio,rst_ratio,new_flow_rate,fan_out,global_avg_pps,global_avg_flow_rate,global_avg_len
-1734417600,imsi-001010000000001,60.60.0.1,4.523,1480.5,0.85,0.15,0.0,0.12,0.03,350.2,45,3.845,285.6,1200.3
-1734417600,imsi-001010000000002,60.60.0.2,3.201,850.0,0.92,0.08,0.0,0.08,0.01,120.5,12,3.845,285.6,1200.3
+timestamp,supi,ue_ip,ul_log_pps,global_ul_log_pps,dl_log_pps,global_dl_log_pps,ul_avg_len,global_ul_avg_len,dl_avg_len,global_dl_avg_len,pps_ratio,global_pps_ratio,byte_ratio,global_byte_ratio,tcp_ratio,udp_ratio,icmp_ratio,syn_ratio,rst_ratio,new_flow_rate,global_new_flow_rate,fan_out,global_fan_out,ack_ratio
+1734417600,imsi-001010000000001,60.60.0.1,4.523,3.845,5.301,4.123,1480.5,1200.3,1450.0,1250.0,1.15,1.05,2.80,1.85,0.85,0.15,0.0,0.12,0.03,350.2,285.6,0.45,0.35,0.82
 ```
 
 ### 欄位說明
@@ -503,27 +502,53 @@ timestamp,supi,ue_ip,log_pps,avg_len,tcp_ratio,udp_ratio,icmp_ratio,syn_ratio,rs
 - **supi**: UE 識別碼 (例如: imsi-001010000000001)
 - **ue_ip**: UE IP 地址 (例如: 60.60.0.1)
 
-#### UE 個別特徵欄位
-- **log_pps**: Log10(Packets Per Second + 1) - 流量規模
-- **avg_len**: 平均封包大小 (bytes)
+#### UE 個別特徵欄位（每個特徵都有對應的 global 數值）
+
+**封包速率 (Packets Per Second)**
+- **ul_log_pps**: 上行 Log10(Packets Per Second + 1) - 上行流量規模
+- **global_ul_log_pps**: 全域平均上行 Log10(PPS) - 該批次所有活躍 UE 的平均值
+- **dl_log_pps**: 下行 Log10(Packets Per Second + 1) - 下行流量規模
+- **global_dl_log_pps**: 全域平均下行 Log10(PPS)
+
+**封包大小 (Packet Length)**
+- **ul_avg_len**: 上行平均封包大小 (bytes)
+- **global_ul_avg_len**: 全域平均上行封包大小
+- **dl_avg_len**: 下行平均封包大小 (bytes)
+- **global_dl_avg_len**: 全域平均下行封包大小
+
+**流量比例 (Traffic Ratios)**
+- **pps_ratio**: DL/UL PPS 比例 - 下行與上行封包數比例
+- **global_pps_ratio**: 全域平均 PPS 比例
+- **byte_ratio**: DL/UL Byte 比例 - 下行與上行位元組數比例
+- **global_byte_ratio**: 全域平均 Byte 比例
+
+**協定比例 (Protocol Ratios)**
 - **tcp_ratio**: TCP 封包比例 (0.0-1.0)
 - **udp_ratio**: UDP 封包比例 (0.0-1.0)
 - **icmp_ratio**: ICMP 封包比例 (0.0-1.0)
 - **syn_ratio**: TCP SYN 旗標比例 (0.0-1.0)
 - **rst_ratio**: TCP RST 旗標比例 (0.0-1.0)
-- **new_flow_rate**: 新連線率 (connections/sec)
-- **fan_out**: 目標地址分散度 (0-256)
 
-#### 全域統計欄位 ✨ **新增 (2025-12-17)**
-- **global_avg_pps**: 全域平均 Log10(PPS) - 該批次所有活躍 UE 的平均值
-- **global_avg_flow_rate**: 全域平均新連線率 - 該批次所有活躍 UE 的平均值
-- **global_avg_len**: 全域平均封包大小 - 該批次所有活躍 UE 的平均值
+**流量特徵 (Flow Characteristics)**
+- **new_flow_rate**: 新連線率 (connections/sec)
+- **global_new_flow_rate**: 全域平均新連線率
+- **fan_out**: 目標地址分散度 (0.0-1.0, 來自 256-bit bitmap)
+- **global_fan_out**: 全域平均 Fan Out
+
+**下行特徵 (Downlink-specific)**
+- **ack_ratio**: TCP ACK 封包比例 (0.0-1.0)
 
 ### 全域統計計算規則
 - 在每個 Poll 週期，FlowAnalyzer 計算所有**活躍** UE (packet_count > 0) 的平均值
 - 同一批次的所有 UE 記錄共用相同的全域統計數據
 - 全域統計數據會填充到每一條 UeTrafficRecord 中
 - 如果某批次無活躍 UE，則全域統計欄位為 0.0
+- 下行特徵的 global 數值僅從有下行流量的 UE 中計算（dl_log_pps > 0）
+
+### Global 數值的意義
+- **異常偵測**: 幫助 LLM 識別與平均值偏離過大的 UE
+- **資料分析**: 提供網路整體狀態資訊作為參考
+- **排列方式**: Global 數值緊接在對應的 UE 數值後面，便於比對和分析
 
 ### 輸出特性
 - **排序**: 記錄按 SUPI 字母順序排序輸出
@@ -627,12 +652,17 @@ type UeTrafficRecord struct {
     SynRatio    float64 // TCP SYN ratio
     RstRatio    float64 // TCP RST ratio
     NewFlowRate float64 // New flows per second
-    FanOut      float64 // Destination diversity (0-256)
+    FanOut      float64 // Destination diversity (0-1.0)
     
-    // Global network statistics (for context) ✨ 新增 (2025-12-17)
-    GlobalAvgPPS      float64 // 全域平均 Log10(PPS)
-    GlobalAvgFlowRate float64 // 全域平均新連線率
-    GlobalAvgLen      float64 // 全域平均封包大小
+    // Global network statistics (for context) ✨ 更新 (2025-12-24)
+    GlobalUlLogPPS    float64 // 全域平均上行 Log10(PPS)
+    GlobalDlLogPPS    float64 // 全域平均下行 Log10(PPS)
+    GlobalUlAvgLen    float64 // 全域平均上行封包大小
+    GlobalDlAvgLen    float64 // 全域平均下行封包大小
+    GlobalPPSRatio    float64 // 全域平均 PPS 比例
+    GlobalByteRatio   float64 // 全域平均 Byte 比例
+    GlobalNewFlowRate float64 // 全域平均新連線率
+    GlobalFanOut      float64 // 全域平均 Fan Out
 }
 ```
 
@@ -651,13 +681,19 @@ type InferenceResult struct {
 }
 ```
 
-### Global Network Statistics ✨ **新增 (2025-12-16)**
+### Global Network Statistics ✨ **更新 (2025-12-24)**
 ```go
 // 全域網路統計 (每個 Poll 週期計算一次)
 type GlobalNetworkStats struct {
-    AvgLogPPS   float64 `json:"avg_log_pps"`   // 平均 Log10(PPS)
-    AvgFlowRate float64 `json:"avg_flow_rate"` // 平均新連線率
-    AvgLen      float64 `json:"avg_len"`       // 平均封包大小
+    // Uplink global statistics
+    AvgUlLogPPS    float64 `json:"avg_ul_log_pps"`    // 平均上行 Log10(PPS)
+    AvgDlLogPPS    float64 `json:"avg_dl_log_pps"`    // 平均下行 Log10(PPS)
+    AvgUlLen       float64 `json:"avg_ul_len"`        // 平均上行封包大小
+    AvgDlLen       float64 `json:"avg_dl_len"`        // 平均下行封包大小
+    AvgPPSRatio    float64 `json:"avg_pps_ratio"`     // 平均 DL/UL PPS 比例
+    AvgByteRatio   float64 `json:"avg_byte_ratio"`    // 平均 DL/UL Byte 比例
+    AvgNewFlowRate float64 `json:"avg_new_flow_rate"` // 平均新連線率
+    AvgFanOut      float64 `json:"avg_fan_out"`       // 平均 Fan Out
 }
 
 // BatchUeTrafficRecords 包含全域統計
@@ -695,10 +731,15 @@ type ExportMessage struct {
         },
         Timestamp: 1702649400,
         BatchSize: 20,
-        GlobalStats: &GlobalNetworkStats{  // ✨ 新增
-            AvgLogPPS:   3.2,
-            AvgFlowRate: 0.3,
-            AvgLen:      650.0,
+        GlobalStats: &GlobalNetworkStats{  // ✨ 更新 (2025-12-24)
+            AvgUlLogPPS:    3.2,
+            AvgDlLogPPS:    2.8,
+            AvgNewFlowRate: 0.3,
+            AvgUlLen:       650.0,
+            AvgDlLen:       750.0,
+            AvgPPSRatio:    1.1,
+            AvgByteRatio:   1.5,
+            AvgFanOut:      0.25,
         },
     }
 }

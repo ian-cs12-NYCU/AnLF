@@ -32,29 +32,27 @@ type UeTrafficRecord struct {
 	PollID    uint64 `json:"-" csv:"-"` // Poll sequence number (for logging only, not exported)
 
 	// Global network statistics for this batch window (uplink)
-	GlobalAvgPPS      float64 `json:"global_avg_pps" csv:"global_avg_pps"`
-	GlobalAvgFlowRate float64 `json:"global_avg_flow_rate" csv:"global_avg_flow_rate"`
-	GlobalAvgUlLen    float64 `json:"global_avg_ul_len" csv:"global_avg_ul_len"`
-
-	// Global network statistics for this batch window (downlink)
-	GlobalAvgDlPPS     float64 `json:"global_avg_dl_pps" csv:"global_avg_dl_pps"`
-	GlobalAvgDlLen     float64 `json:"global_avg_dl_len" csv:"global_avg_dl_len"`
-	GlobalAvgPPSRatio  float64 `json:"global_avg_pps_ratio" csv:"global_avg_pps_ratio"`
-	GlobalAvgByteRatio float64 `json:"global_avg_byte_ratio" csv:"global_avg_byte_ratio"`
+	GlobalUlLogPPS    float64 `json:"global_ul_log_pps" csv:"global_ul_log_pps"`       // Renamed from GlobalAvgPPS for clarity
+	GlobalDlLogPPS    float64 `json:"global_dl_log_pps" csv:"global_dl_log_pps"`       // Downlink log PPS
+	GlobalUlAvgLen    float64 `json:"global_ul_avg_len" csv:"global_ul_avg_len"`       // Renamed from GlobalAvgUlLen
+	GlobalDlAvgLen    float64 `json:"global_dl_avg_len" csv:"global_dl_avg_len"`       // Downlink average length
+	GlobalPPSRatio    float64 `json:"global_pps_ratio" csv:"global_pps_ratio"`         // Renamed from GlobalAvgPPSRatio
+	GlobalByteRatio   float64 `json:"global_byte_ratio" csv:"global_byte_ratio"`       // Renamed from GlobalAvgByteRatio
+	GlobalNewFlowRate float64 `json:"global_new_flow_rate" csv:"global_new_flow_rate"` // Renamed from GlobalAvgFlowRate
+	GlobalFanOut      float64 `json:"global_fan_out" csv:"global_fan_out"`             // New: average fan out
 }
 
 // GlobalNetworkStats represents aggregated statistics across all UEs in a batch
 type GlobalNetworkStats struct {
 	// Uplink global statistics
-	AvgLogPPS   float64 `json:"avg_log_pps"`   // Average log10(PPS) across all UEs (uplink)
-	AvgFlowRate float64 `json:"avg_flow_rate"` // Average new flow rate (uplink)
-	AvgUlLen    float64 `json:"avg_ul_len"`    // Average uplink packet length
-
-	// Downlink global statistics
-	AvgDlPPS     float64 `json:"avg_dl_pps"`     // Average downlink PPS
-	AvgDlLen     float64 `json:"avg_dl_len"`     // Average downlink packet length
-	AvgPPSRatio  float64 `json:"avg_pps_ratio"`  // Average DL/UL PPS ratio
-	AvgByteRatio float64 `json:"avg_byte_ratio"` // Average DL/UL byte ratio
+	AvgUlLogPPS    float64 `json:"avg_ul_log_pps"`    // Average log10(PPS) across all UEs (uplink)
+	AvgDlLogPPS    float64 `json:"avg_dl_log_pps"`    // Average log10(PPS) across all UEs (downlink)
+	AvgUlLen       float64 `json:"avg_ul_len"`        // Average uplink packet length
+	AvgDlLen       float64 `json:"avg_dl_len"`        // Average downlink packet length
+	AvgPPSRatio    float64 `json:"avg_pps_ratio"`     // Average DL/UL PPS ratio
+	AvgByteRatio   float64 `json:"avg_byte_ratio"`    // Average DL/UL byte ratio
+	AvgNewFlowRate float64 `json:"avg_new_flow_rate"` // Average new flow rate
+	AvgFanOut      float64 `json:"avg_fan_out"`       // Average fan out
 }
 
 // BatchUeTrafficRecords represents a batch of UE traffic records collected in one monitoring cycle
