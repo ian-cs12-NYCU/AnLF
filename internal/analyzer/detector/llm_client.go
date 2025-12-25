@@ -20,11 +20,11 @@ type LLMClient struct {
 	serverURL     string
 	httpClient    *http.Client
 	timeout       time.Duration
-	systemPrompt  string // Cached system prompt content
-	scoreRegex    *regexp.Regexp
-	maxConcurrent int     // Max concurrent requests (for semaphore)
-	temperature   float64 // LLM temperature parameter
-	maxTokens     int     // Max response tokens
+	systemPrompt  string           // Cached system prompt content
+	scoreRegexes  []*regexp.Regexp // Multiple regex patterns for different response formats
+	maxConcurrent int              // Max concurrent requests (for semaphore)
+	temperature   float64          // LLM temperature parameter
+	maxTokens     int              // Max response tokens
 }
 
 type LLMClientConfig struct {
@@ -69,6 +69,21 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 	// Reference: high_speed_HTTPclient.md
 	// Key optimization: MaxIdleConnsPerHost=100 allows 97 UEs to use persistent connections
 	// Without this, Go's default is only 2, causing severe TCP handshake overhead
+
+	// Multiple regex patterns to support different prompt response formats:
+	// 1. Standard format: "Risk Score: 0.8"
+	// 2. JSON format: {"risk_score": 0.98, ...}
+	// 3. JSON with quotes: "risk_score": "0.98"
+	// 4. Fallback format: "Response: 0.8" (for non-finetuned LLM outputs)
+	// Patterns are tried in order - more specific formats first
+	scoreRegexes := []*regexp.Regexp{
+		regexp.MustCompile(`Risk Score:\s*((?:0\.\d+|1\.0|0|1))(?:[^\d]|$)`),        // Standard format
+		regexp.MustCompile(`"risk_score":\s*((?:0\.\d+|1\.0|0|1))(?:[,}\s]|$)`),     // JSON format (number)
+		regexp.MustCompile(`"risk_score":\s*"((?:0\.\d+|1\.0|0|1))"(?:[,}\s]|$)`),   // JSON format (string)
+		regexp.MustCompile(`risk_score["\s:]+\s*((?:0\.\d+|1\.0|0|1))(?:[,}\s]|$)`), // Flexible JSON
+		regexp.MustCompile(`Response:\s*((?:0\.\d+|1\.0|0|1))(?:[^\d]|$)`),          // Fallback format (non-finetuned)
+	}
+
 	return &LLMClient{
 		serverURL: cfg.ServerURL,
 		httpClient: &http.Client{
@@ -82,7 +97,7 @@ func NewLLMClient(cfg LLMClientConfig) *LLMClient {
 		},
 		timeout:       cfg.Timeout,
 		systemPrompt:  systemPrompt,
-		scoreRegex:    regexp.MustCompile(`Risk Score:\s*(0\.\d+|1\.0|0|1)`),
+		scoreRegexes:  scoreRegexes,
 		maxConcurrent: cfg.MaxConcurrent,
 		temperature:   cfg.Temperature,
 		maxTokens:     cfg.MaxTokens,
@@ -308,11 +323,22 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 	rawContent := openAIResp.Choices[0].Message.Content
 	logger.AnalyzerLog.Debugf("[LLMClient] %s: Raw LLM response: %s", record.Supi, rawContent)
 
-	// Extract risk score using regex (fault-tolerant)
-	match := c.scoreRegex.FindStringSubmatch(rawContent)
-	if len(match) < 2 {
-		// No valid score found, return default (fail-open)
-		logger.AnalyzerLog.Warnf("[LLMClient] ⚠️  %s: Failed to parse Risk Score from LLM response (regex mismatch)", record.Supi)
+	// Extract risk score using multiple regex patterns (fault-tolerant)
+	// Tries all formats: standard "Risk Score: X", JSON "risk_score": X, etc.
+	var match []string
+	var matchedPattern int = -1
+
+	for i, regex := range c.scoreRegexes {
+		match = regex.FindStringSubmatch(rawContent)
+		if len(match) >= 2 {
+			matchedPattern = i
+			break
+		}
+	}
+
+	if matchedPattern == -1 {
+		// No valid score found with any pattern, return default (fail-open)
+		logger.AnalyzerLog.Warnf("[LLMClient] ⚠️  %s: Failed to parse Risk Score from LLM response (no regex matched)", record.Supi)
 		logger.AnalyzerLog.Warnf("[LLMClient] Raw response: %s", rawContent)
 		logger.AnalyzerLog.Warnf("[LLMClient] Applying fail-open: defaulting to score 0.1 (low risk)")
 		return &models.InferenceResult{
@@ -331,7 +357,7 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 		}, nil
 	}
 
-	logger.AnalyzerLog.Debugf("[LLMClient] ✓ %s: Parsed anomaly score = %.2f", record.Supi, score)
+	logger.AnalyzerLog.Debugf("[LLMClient] ✓ %s: Parsed anomaly score = %.2f (pattern #%d)", record.Supi, score, matchedPattern)
 
 	return &models.InferenceResult{
 		Supi:         record.Supi,
