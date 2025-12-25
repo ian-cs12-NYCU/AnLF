@@ -155,9 +155,6 @@ func (rs *RiskScorer) processOneUE(result *models.InferenceResult, currentTime i
 			pollID, result.Supi, decayAmount, timeDelta, state.Score)
 	}
 
-	// Store previous status for transition detection
-	previousStatus := state.Status
-
 	// Check if LLM detected an attack
 	isAttack := result.AnomalyScore >= rs.config.LLMConfidenceCutoff
 	if isAttack {
@@ -176,7 +173,7 @@ func (rs *RiskScorer) processOneUE(result *models.InferenceResult, currentTime i
 	if state.Status == StatusNormal && state.Score >= rs.config.BlockThreshold {
 		state.Status = StatusBlocked
 		state.BlockedSince = currentTime
-		logger.AnalyzerLog.Warnf("[Poll #%d] [RiskScorer] %s: BLOCKED (score %.2f >= %.2f)",
+		logger.AnalyzerLog.Infof("[Poll #%d] [RiskScorer] %s: BLOCKED (score %.2f >= %.2f)",
 			pollID, result.Supi, state.Score, rs.config.BlockThreshold)
 	} else if state.Status == StatusBlocked && state.Score < rs.config.UnblockThreshold {
 		blockedDuration := currentTime - state.BlockedSince
@@ -186,11 +183,7 @@ func (rs *RiskScorer) processOneUE(result *models.InferenceResult, currentTime i
 			pollID, result.Supi, state.Score, rs.config.UnblockThreshold, blockedDuration)
 	}
 
-	// Log status transitions
-	if previousStatus != state.Status {
-		logger.AnalyzerLog.Warnf("[Poll #%d] [RiskScorer] %s: Status transition %s -> %s",
-			pollID, result.Supi, previousStatus, state.Status)
-	}
+	// Note: Status transitions are already logged above (BLOCKED/UNBLOCKED)
 
 	// Update last update timestamp
 	state.LastUpdateTs = currentTime

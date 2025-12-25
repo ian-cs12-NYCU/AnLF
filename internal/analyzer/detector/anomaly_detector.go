@@ -222,6 +222,14 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 	if d.riskScoringEnabled && d.riskScorer != nil {
 		enhancedResults := d.riskScorer.ProcessInferenceResults(allResults, pollID)
 
+		// Collect blocked UEs for summary table
+		var blockedUEs []*models.EnhancedInferenceResult
+		for _, enhanced := range enhancedResults {
+			if enhanced.IsBlocked {
+				blockedUEs = append(blockedUEs, enhanced)
+			}
+		}
+
 		// Enqueue enhanced results to ExportQueue
 		for _, enhanced := range enhancedResults {
 			msg := queue.NewEnhancedInferenceResultMessage(enhanced)
@@ -231,6 +239,23 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 				logger.AnalyzerLog.Debugf("%s [AnomalyDetector] Enhanced analysis - SUPI: %s | LLM: %.3f | Risk: %.2f | Status: %s",
 					logPrefix, enhanced.Supi, enhanced.AnomalyScore, enhanced.RiskScore, enhanced.Status)
 			}
+		}
+
+		// Print summary table of blocked UEs if any
+		if len(blockedUEs) > 0 {
+			logger.AnalyzerLog.Infof("%s ╔═════════════════════════════════════════════════════════════════════════╗", logPrefix)
+			logger.AnalyzerLog.Infof("%s ║ BLOCKED UEs SUMMARY (%d detected)                                           ", logPrefix, len(blockedUEs))
+			logger.AnalyzerLog.Infof("%s ╠═════════════════════════════════════════════════════════════════════════╣", logPrefix)
+			logger.AnalyzerLog.Infof("%s ║ SUPI                          | Anomaly Score | Risk Score | Attack Count  ║", logPrefix)
+			logger.AnalyzerLog.Infof("%s ╟─────────────────────────────────────────────────────────────────────────╢", logPrefix)
+
+			for _, ue := range blockedUEs {
+				logger.AnalyzerLog.Infof("%s ║ %-29s │ %13.3f │ %10.2f │ %13s ║",
+					logPrefix, ue.Supi, ue.AnomalyScore, ue.RiskScore,
+					fmt.Sprintf("Yes" /* actual attack count would need to be tracked */))
+			}
+
+			logger.AnalyzerLog.Infof("%s ╚═════════════════════════════════════════════════════════════════════════╝", logPrefix)
 		}
 	} else {
 		// Enqueue raw results without risk scoring (legacy mode)
