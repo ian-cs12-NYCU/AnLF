@@ -17,13 +17,13 @@ LLM_SERVER_URL = "http://140.113.208.89:8000"  # Target LLM server endpoint
 # /home/vagrant/AnLF/anlf/prompts/anomaly_detection_single_ue.txt
 # /home/vagrant/AnLF/anlf/prompts/anomaly_detection_low_latency.txt
 # /home/vagrant/AnLF/anlf/prompts/anomaly_detection_high_accuracy.txt
-PROMPT_TEMPLATE_PATH = "/home/vagrant/AnLF/anlf/prompts/anomaly_detection_high_accuracy.txt"
+PROMPT_TEMPLATE_PATH = "/home/vagrant/AnLF/anlf/prompts/anomaly_detection_low_latency.txt"
 
 # User Data Source (CSV file from output directory)
-USER_DATA_SOURCE = "/home/vagrant/AnLF/anlf/output/5G-UE/5G-UE.csv"
+USER_DATA_SOURCE = "/home/vagrant/AnLF/anlf/output/Mix-45-5/Mix-45-5.csv"
 
 # LLM Parameters (matching AnLF configuration)
-BATCH_SIZE = 10  # Number of UEs to process per batch
+BATCH_SIZE = 5  # Number of UEs to process per batch
 TEMPERATURE = 0.1  # LLM temperature (0.0-2.0, lower = more deterministic)
 MAX_TOKENS = 50  # Max response tokens (sufficient for "Risk Score: X.X")
 INCLUDE_GLOBAL_CONTEXT = True  # Include global network statistics in prompt

@@ -345,6 +345,7 @@ func (a *AnlfApp) initMonitoringPipeline() error {
 		LLMServerURL:         a.cfg.GetAnomalyDetectionServerURL(),
 		LLMTimeout:           time.Duration(a.cfg.GetAnomalyDetectionTimeout()) * time.Second,
 		SystemPromptPath:     a.cfg.GetAnomalyDetectionSystemPromptPath(),
+		MaxConcurrent:        a.cfg.GetAnomalyDetectionMaxConcurrent(),
 		Temperature:          a.cfg.GetAnomalyDetectionTemperature(),
 		MaxTokens:            a.cfg.GetAnomalyDetectionMaxTokens(),
 		IncludeGlobalContext: a.cfg.GetAnomalyDetectionIncludeGlobalContext(),

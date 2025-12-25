@@ -43,6 +43,7 @@ type AnomalyDetectorConfig struct {
 	LLMServerURL         string
 	LLMTimeout           time.Duration
 	SystemPromptPath     string                   // Path to system prompt file
+	MaxConcurrent        int                      // Max concurrent HTTP requests to LLM server
 	Temperature          float64                  // LLM temperature
 	MaxTokens            int                      // Max response tokens
 	IncludeGlobalContext bool                     // Include global network statistics in prompt
@@ -65,6 +66,7 @@ func NewAnomalyDetector(cfg AnomalyDetectorConfig, exportQueue *queue.ExportQueu
 		ServerURL:        cfg.LLMServerURL,
 		Timeout:          cfg.LLMTimeout,
 		SystemPromptPath: cfg.SystemPromptPath,
+		MaxConcurrent:    cfg.MaxConcurrent,
 		Temperature:      cfg.Temperature,
 		MaxTokens:        cfg.MaxTokens,
 	})

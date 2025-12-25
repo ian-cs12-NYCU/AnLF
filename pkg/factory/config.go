@@ -72,6 +72,7 @@ type AnomalyDetection struct {
 	Enable               bool         `yaml:"enable" valid:"type(bool)"`
 	ServerURL            string       `yaml:"serverUrl" valid:"url,optional"`
 	Timeout              int          `yaml:"timeout" valid:"type(int),optional"`               // in seconds
+	MaxConcurrent        int          `yaml:"maxConcurrent" valid:"type(int),optional"`         // max concurrent HTTP requests (default: 100)
 	SystemPromptPath     string       `yaml:"systemPromptPath" valid:"type(string),optional"`   // path to system prompt file
 	BatchSize            int          `yaml:"batchSize" valid:"type(int),optional"`             // optimal batch size for LLM (5-10 UEs recommended)
 	Temperature          float64      `yaml:"temperature" valid:"type(float64),optional"`       // LLM temperature (0.0-2.0, default: 0.1)
@@ -410,6 +411,15 @@ func (c *Config) GetAnomalyDetectionMaxTokens() int {
 		return c.Configuration.AnomalyDetection.MaxTokens
 	}
 	return 50 // default max tokens (sufficient for "Risk Score: X.X")
+}
+
+func (c *Config) GetAnomalyDetectionMaxConcurrent() int {
+	c.RLock()
+	defer c.RUnlock()
+	if c.Configuration != nil && c.Configuration.AnomalyDetection != nil && c.Configuration.AnomalyDetection.MaxConcurrent > 0 {
+		return c.Configuration.AnomalyDetection.MaxConcurrent
+	}
+	return 100 // default max concurrent requests (matches MaxIdleConnsPerHost)
 }
 
 func (c *Config) GetSmfUrl() string {
