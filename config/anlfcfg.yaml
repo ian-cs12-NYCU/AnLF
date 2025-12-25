@@ -41,6 +41,15 @@ configuration:
     temperature: 0.1  # LLM temperature (0.0-2.0, lower = more deterministic)
     maxTokens: 50  # Max response tokens (sufficient for "Risk Score: X.X")
     includeGlobalContext: true  # Include global network statistics in prompt (avg PPS, Flow, Packet Size)
+    
+    # Risk Scoring Configuration (CUSUM-based cumulative risk assessment)
+    riskScoring:
+      enable: true                    # Enable risk scoring to convert LLM scores to actionable decisions
+      llmConfidenceCutoff: 0.7       # LLM threshold: score >= 0.7 counts as "attack" (+50 to risk_score)
+      hitsToBan: 2                    # Block after 2 attacks (100/2 = 50 points per attack)
+      secondsToForgive: 20            # Decay to 0 in 20 seconds of good behavior (100/20 = 5 points/sec decay)
+      blockThreshold: 80.0            # Block UE when risk_score >= 80
+      unblockThreshold: 50.0          # Unblock UE when risk_score < 50 (prevents flapping)
 
 logger:
   enable: true

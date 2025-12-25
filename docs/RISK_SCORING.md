@@ -449,6 +449,47 @@ riskScorer.ResetUE("imsi-208930000000001")
 
 **A**：当前版本需要重启服务。未来版本可通过 SBI API 实现热更新。
 
+### Q5：我的数据显示 LLM Score 0.80，但状态仍是 NORMAL，这是 BUG 吗？
+
+**A**：这不是 BUG，而是 **Risk Scoring 系统未启用**。
+
+**症状**：
+```csv
+imsi-208930000000046,0.800,0.00,NORMAL,false,false
+```
+- ✅ `anomaly_score` 正确（LLM 输出 0.80）
+- ❌ `risk_score` 始终为 0（未累积）
+- ❌ `status` 始终为 NORMAL（无阈值判定）
+
+**原因**：`anlfcfg.yaml` 中 `riskScoring` 配置缺失或 `enable: false`。
+
+**解决方案**：
+
+1. 确认 `anlfcfg.yaml` 包含以下配置：
+```yaml
+riskScoring:
+  enable: true
+  llmConfidenceCutoff: 0.7
+  hitsToBan: 2
+  secondsToForgive: 20
+  blockThreshold: 80.0
+  unblockThreshold: 50.0
+```
+
+2. 重新编译并重启：
+```bash
+make clean && make build
+./bin/anlf
+```
+
+**预期效果**：持续 0.80 分的攻击者在 2 次后触发 BLOCKED
+```csv
+imsi-208930000000046,0.800,95.00,BLOCKED,true,true
+                              ↑    ↑
+                              |    └─ status = BLOCKED
+                              └─ risk_score = 95.00 (已累积)
+```
+
 ---
 
 ## 未来扩展
