@@ -1,0 +1,29 @@
+
+prompt_low_latency = """[GLOBAL_BASELINE]
+UL_PPS_Log: {global_ul_log_pps}
+DL_PPS_Log: {global_dl_log_pps}
+UL_Avg_Len: {global_ul_avg_len}
+DL_Avg_Len: {global_dl_avg_len}
+Flow_Rate: {global_new_flow_rate}
+Fan_Out: {global_fan_out}
+PPS_Ratio: {global_pps_ratio}
+Byte_Ratio: {global_byte_ratio}
+
+[TARGET_UE]
+UL_PPS: {ul_log_pps}
+DL_PPS: {dl_log_pps}
+UL_Len: {ul_avg_len}
+DL_Len: {dl_avg_len}
+Flow: {new_flow_rate}
+Fan: {fan_out}
+PPS_R: {pps_ratio}
+Byte_R: {byte_ratio}
+ACK_R: {ack_ratio}
+TCP: {tcp_ratio}
+UDP: {udp_ratio}
+ICMP: {icmp_ratio}
+SYN: {syn_ratio}
+RST: {rst_ratio}
+
+Task: Output Risk Score ONLY.
+Response:"""

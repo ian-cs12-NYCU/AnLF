@@ -1,0 +1,53 @@
+Analyze the 5G traffic context below.
+
+Global Network Baseline:
+{{
+  "global_baseline": {{
+    "ul_pps": {global_ul_log_pps},
+    "dl_pps": {global_dl_log_pps},
+    "ul_len": {global_ul_avg_len},
+    "dl_len": {global_dl_avg_len},
+    "pps_ratio": {global_pps_ratio},
+    "byte_ratio": {global_byte_ratio},
+    "flow_rate": {global_new_flow_rate},
+    "fan_out": {global_fan_out}
+  }}
+}}
+
+Target UE Telemetry:
+{{
+  "ue_metrics": {{
+    "volume": {{
+        "ul_pps": {ul_log_pps},
+        "dl_pps": {dl_log_pps},
+        "ul_len": {ul_avg_len},
+        "dl_len": {dl_avg_len}
+    }},
+    "behavior": {{
+        "flow_rate": {new_flow_rate},
+        "fan_out": {fan_out}
+    }},
+    "ratios": {{
+        "pps_ratio": {pps_ratio},
+        "byte_ratio": {byte_ratio},
+        "ack_ratio": {ack_ratio}
+    }},
+    "protocols": {{
+        "tcp": {tcp_ratio},
+        "udp": {udp_ratio},
+        "icmp": {icmp_ratio},
+        "flags": {{
+           "syn": {syn_ratio},
+           "rst": {rst_ratio}
+        }}
+    }}
+  }}
+}}
+
+Task: Detect DoS attacks based on the metrics above. Output Format: Return a raw JSON object with the following keys ONLY:
+
+"risk_score": (float 0.0-1.0)
+
+"classification": (string "normal" or "attack")
+
+"primary_factor": (string, the most suspicious feature)
