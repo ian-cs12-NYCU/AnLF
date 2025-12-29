@@ -146,7 +146,7 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 				result := &models.InferenceResult{
 					Supi:         ue.Supi,
 					AnomalyScore: 0.0, // Empty records have zero risk
-				Timestamp:    time.Now().Unix(),
+					Timestamp:    time.Now().Unix(),
 				}
 				mu.Lock()
 				allResults = append(allResults, result)
