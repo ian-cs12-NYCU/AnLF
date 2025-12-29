@@ -42,9 +42,9 @@ func NewInferenceResultExporter(baseDir string) (*InferenceResultExporter, error
 		writer: writer,
 	}
 
-	// Write header (enhanced format with risk scoring)
+	// Write header (enhanced format with risk scoring and timestamp)
 	header := []string{
-		"supi", "anomaly_score", "risk_score", "status", "is_blocked", "attack_detected",
+		"timestamp", "supi", "anomaly_score", "risk_score", "status", "is_blocked", "attack_detected",
 	}
 	if err := writer.Write(header); err != nil {
 		file.Close()
@@ -68,6 +68,7 @@ func (e *InferenceResultExporter) Export(data interface{}) error {
 	case *models.EnhancedInferenceResult:
 		// Enhanced result with risk scoring
 		row = []string{
+			fmt.Sprintf("%d", result.Timestamp),
 			result.Supi,
 			fmt.Sprintf("%.3f", result.AnomalyScore),
 			fmt.Sprintf("%.2f", result.RiskScore),
@@ -78,6 +79,7 @@ func (e *InferenceResultExporter) Export(data interface{}) error {
 	case *models.InferenceResult:
 		// Legacy result (without risk scoring)
 		row = []string{
+			fmt.Sprintf("%d", result.Timestamp),
 			result.Supi,
 			fmt.Sprintf("%.3f", result.AnomalyScore),
 			"0.00",   // Default risk score

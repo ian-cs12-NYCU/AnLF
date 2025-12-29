@@ -4,6 +4,7 @@ package models
 type InferenceResult struct {
 	Supi         string  `json:"supi"`
 	AnomalyScore float64 `json:"anomaly_score"` // 0.0 - 1.0
+	Timestamp    int64   `json:"timestamp"`     // Unix timestamp in seconds
 }
 
 // EnhancedInferenceResult extends InferenceResult with CUSUM-based risk scoring

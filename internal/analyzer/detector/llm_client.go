@@ -344,6 +344,7 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 		return &models.InferenceResult{
 			Supi:         record.Supi,
 			AnomalyScore: 0.1,
+			Timestamp:    time.Now().Unix(),
 		}, nil
 	}
 
@@ -354,6 +355,7 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 		return &models.InferenceResult{
 			Supi:         record.Supi,
 			AnomalyScore: 0.1,
+			Timestamp:    time.Now().Unix(),
 		}, nil
 	}
 
@@ -362,6 +364,7 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 	return &models.InferenceResult{
 		Supi:         record.Supi,
 		AnomalyScore: score,
+		Timestamp:    time.Now().Unix(),
 	}, nil
 }
 

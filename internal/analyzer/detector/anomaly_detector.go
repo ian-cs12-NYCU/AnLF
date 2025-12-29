@@ -146,6 +146,7 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 				result := &models.InferenceResult{
 					Supi:         ue.Supi,
 					AnomalyScore: 0.0, // Empty records have zero risk
+				Timestamp:    time.Now().Unix(),
 				}
 				mu.Lock()
 				allResults = append(allResults, result)
@@ -291,10 +292,12 @@ func (d *AnomalyDetector) HandleBatch(batch *models.BatchUeTrafficRecords) error
 // createDefaultResults creates default "Normal" inference results for fail-open mechanism
 func (d *AnomalyDetector) createDefaultResults(records []*models.UeTrafficRecord) []*models.InferenceResult {
 	results := make([]*models.InferenceResult, len(records))
+	now := time.Now().Unix()
 	for i, record := range records {
 		results[i] = &models.InferenceResult{
 			Supi:         record.Supi,
 			AnomalyScore: 0.1, // Default low risk score
+			Timestamp:    now,
 		}
 	}
 	return results
