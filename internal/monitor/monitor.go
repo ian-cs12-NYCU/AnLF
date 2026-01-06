@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/free5gc/anlf/internal/analyzer/exporter"
 	"github.com/free5gc/anlf/internal/logger"
 	"github.com/free5gc/anlf/internal/sbi/consumer"
 	"github.com/free5gc/anlf/pkg/ebpf"
@@ -19,6 +20,7 @@ type TrafficMonitor struct {
 	featureChan    chan<- *models.BatchUeTrafficRecords
 	pollInterval   time.Duration
 	windowSeconds  float64
+	topNExporter   exporter.Exporter
 	stopChan       chan struct{}
 	doneChan       chan struct{}
 }
@@ -30,12 +32,20 @@ func NewTrafficMonitor(
 	featureChan chan<- *models.BatchUeTrafficRecords,
 	pollInterval time.Duration,
 ) *TrafficMonitor {
+	// Create Top-N statistics exporter
+	topNExp, err := exporter.NewTopNExporter("./output")
+	if err != nil {
+		logger.MonitorLog.Errorf("Failed to create Top-N exporter: %v", err)
+		topNExp = nil
+	}
+
 	return &TrafficMonitor{
 		ebpfMgr:        ebpfMgr,
 		ueDataProvider: ueDataProvider,
 		featureChan:    featureChan,
 		pollInterval:   pollInterval,
 		windowSeconds:  pollInterval.Seconds(),
+		topNExporter:   topNExp,
 		stopChan:       make(chan struct{}),
 		doneChan:       make(chan struct{}),
 	}
@@ -59,6 +69,12 @@ func (m *TrafficMonitor) Stop(timeout time.Duration) error {
 
 	select {
 	case <-m.doneChan:
+		// Shutdown Top-N exporter
+		if m.topNExporter != nil {
+			if err := m.topNExporter.Shutdown(); err != nil {
+				logger.MonitorLog.Errorf("Failed to shutdown Top-N exporter: %v", err)
+			}
+		}
 		logger.MonitorLog.Info("TrafficMonitor stopped successfully")
 		return nil
 	case <-time.After(timeout):
@@ -97,6 +113,22 @@ func (m *TrafficMonitor) pollAndSend() {
 	if err != nil {
 		logger.MonitorLog.Errorf("Failed to read eBPF metrics: %v", err)
 		return
+	}
+
+	// Read and reset top-N statistics
+	topStats, err := m.ebpfMgr.ReadAndResetTopStats()
+	if err != nil {
+		logger.MonitorLog.Errorf("Failed to read top stats: %v", err)
+	} else {
+		// Log Top 3 statistics
+		m.logTopStats(topStats)
+
+		// Export to CSV file
+		if m.topNExporter != nil {
+			if err := m.topNExporter.Export(topStats); err != nil {
+				logger.MonitorLog.Errorf("Failed to export Top-N stats: %v", err)
+			}
+		}
 	}
 
 	// Get all known UEs from UE data provider (already sorted by SUPI)
@@ -150,6 +182,32 @@ func (m *TrafficMonitor) pollAndSend() {
 		logger.MonitorLog.Infof("Sent batch of %d UE traffic records", len(records))
 	default:
 		logger.MonitorLog.Warnf("Feature channel full, dropping batch of %d records", len(records))
+	}
+}
+
+func (m *TrafficMonitor) logTopStats(stats *ebpf.TopStats) {
+	if stats == nil {
+		return
+	}
+
+	// Log Top 3 Subnets
+	logger.MonitorLog.Infof("=== Top 3 Subnets (/24) ===")
+	for i, s := range stats.TopSubnets {
+		subnetIP := ebpf.IPFromNetByteOrder(s.Key)
+		logger.MonitorLog.Infof("  #%d: %s/24 - %d bytes", i+1, subnetIP.String(), s.Bytes)
+	}
+
+	// Log Top 3 Ports
+	logger.MonitorLog.Infof("=== Top 3 Destination Ports ===")
+	for i, s := range stats.TopPorts {
+		logger.MonitorLog.Infof("  #%d: Port %d - %d bytes", i+1, s.Key, s.Bytes)
+	}
+
+	// Log Top 3 IPs
+	logger.MonitorLog.Infof("=== Top 3 Destination IPs ===")
+	for i, s := range stats.TopIPs {
+		destIP := ebpf.IPFromNetByteOrder(s.Key)
+		logger.MonitorLog.Infof("  #%d: %s - %d bytes", i+1, destIP.String(), s.Bytes)
 	}
 }
 

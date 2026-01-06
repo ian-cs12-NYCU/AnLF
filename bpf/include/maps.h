@@ -53,4 +53,29 @@ struct {
     __uint(max_entries, 65536);  // 64K flows
 } flow_tracking_map SEC(".maps");
 
+// Top-N statistics maps for 10.201.0.0/16 subnet only
+// Subnet statistics (/24 subnet prefix)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);   // subnet prefix (e.g., 10.201.1.0 for /24)
+    __type(value, __u64); // byte count
+    __uint(max_entries, 256);  // 256 subnets max in /16
+} subnet_stats_map SEC(".maps");
+
+// Port statistics (destination port)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u16);   // destination port
+    __type(value, __u64); // byte count
+    __uint(max_entries, 65536);  // all possible ports
+} port_stats_map SEC(".maps");
+
+// IP statistics (single destination IP)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);   // destination IP
+    __type(value, __u64); // byte count
+    __uint(max_entries, 65536);  // 64K IPs
+} ip_stats_map SEC(".maps");
+
 #endif

@@ -161,6 +161,7 @@ static __always_inline int process_inner_ip(
     
     __u8 tcp_flags = 0;
     int is_new_flow = 0;
+    __u16 dst_port = 0;
     
     // Check if source is in UE subnet (10.60.0.0/16) for uplink
     __u32 src_ip_host = bpf_ntohl(inner_src_ip);
@@ -182,6 +183,7 @@ static __always_inline int process_inner_ip(
         if ((void *)tcph + sizeof(*tcph) <= data_end) {
             __u16 flags_word = *(__u16 *)((void *)tcph + 12);
             tcp_flags = (flags_word >> 8) & 0xFF;
+            dst_port = bpf_ntohs(tcph->dest);
             
             // Track new flows on SYN packets
             if (tcp_flags & 0x02) {
@@ -190,7 +192,7 @@ static __always_inline int process_inner_ip(
                 fkey.dst_ip = inner_dst_ip;
                 fkey.proto = proto;
                 fkey.src_port = bpf_ntohs(tcph->source);
-                fkey.dst_port = bpf_ntohs(tcph->dest);
+                fkey.dst_port = dst_port;
                 
                 __u8 *existing = bpf_map_lookup_elem(&flow_tracking_map, &fkey);
                 if (!existing) {
@@ -203,12 +205,14 @@ static __always_inline int process_inner_ip(
     } else if (proto == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((void *)iph + sizeof(*iph));
         if ((void *)udph + sizeof(*udph) <= data_end) {
+            dst_port = bpf_ntohs(udph->dest);
+            
             struct flow_key fkey = {};
             fkey.src_ip = inner_src_ip;
             fkey.dst_ip = inner_dst_ip;
             fkey.proto = proto;
             fkey.src_port = bpf_ntohs(udph->source);
-            fkey.dst_port = bpf_ntohs(udph->dest);
+            fkey.dst_port = dst_port;
             
             __u8 *existing = bpf_map_lookup_elem(&flow_tracking_map, &fkey);
             if (!existing) {
@@ -221,6 +225,47 @@ static __always_inline int process_inner_ip(
     
     // Update uplink metrics
     update_ue_uplink_metrics(inner_src_ip, pkt_len, proto, tcp_flags, inner_dst_ip, is_new_flow);
+    
+    // ============================================================================
+    // Top-N Statistics for 10.201.0.0/16 subnet only
+    // ============================================================================
+    
+    // Check if destination IP is in 10.201.0.0/16
+    __u32 dst_ip_host = bpf_ntohl(inner_dst_ip);
+    __u32 lab_subnet_prefix = 0x0ac90000;  // 10.201.0.0
+    __u32 lab_subnet_mask = 0xffff0000;    // /16 mask
+    
+    if ((dst_ip_host & lab_subnet_mask) == lab_subnet_prefix) {
+        // Update IP statistics
+        __u64 *ip_bytes = bpf_map_lookup_elem(&ip_stats_map, &inner_dst_ip);
+        if (ip_bytes) {
+            __sync_fetch_and_add(ip_bytes, (__u64)pkt_len);
+        } else {
+            __u64 new_bytes = (__u64)pkt_len;
+            bpf_map_update_elem(&ip_stats_map, &inner_dst_ip, &new_bytes, BPF_ANY);
+        }
+        
+        // Update subnet statistics (/24)
+        __u32 subnet_24 = inner_dst_ip & bpf_htonl(0xffffff00);  // Mask to /24
+        __u64 *subnet_bytes = bpf_map_lookup_elem(&subnet_stats_map, &subnet_24);
+        if (subnet_bytes) {
+            __sync_fetch_and_add(subnet_bytes, (__u64)pkt_len);
+        } else {
+            __u64 new_bytes = (__u64)pkt_len;
+            bpf_map_update_elem(&subnet_stats_map, &subnet_24, &new_bytes, BPF_ANY);
+        }
+        
+        // Update port statistics (for TCP/UDP only)
+        if ((proto == IPPROTO_TCP || proto == IPPROTO_UDP) && dst_port > 0) {
+            __u64 *port_bytes = bpf_map_lookup_elem(&port_stats_map, &dst_port);
+            if (port_bytes) {
+                __sync_fetch_and_add(port_bytes, (__u64)pkt_len);
+            } else {
+                __u64 new_bytes = (__u64)pkt_len;
+                bpf_map_update_elem(&port_stats_map, &dst_port, &new_bytes, BPF_ANY);
+            }
+        }
+    }
     
     return XDP_PASS;
 }
