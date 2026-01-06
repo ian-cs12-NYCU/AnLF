@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/free5gc/anlf/internal/analyzer/queue"
@@ -122,18 +123,19 @@ func (a *FlowAnalyzer) processBatch(batch *models.BatchUeTrafficRecords) {
 			}
 		}
 		if activeCount > 0 {
+			// Round all global statistics to 2 decimal places for consistency with LLM input
 			batch.GlobalStats = &models.GlobalNetworkStats{
-				AvgUlLogPPS:    sumUlLogPPS / float64(activeCount),
-				AvgNewFlowRate: sumNewFlowRate / float64(activeCount),
-				AvgUlLen:       sumUlLen / float64(activeCount),
-				AvgFanOut:      sumFanOut / float64(activeCount),
+				AvgUlLogPPS:    math.Round((sumUlLogPPS/float64(activeCount))*100) / 100,
+				AvgNewFlowRate: math.Round((sumNewFlowRate/float64(activeCount))*100) / 100,
+				AvgUlLen:       math.Round((sumUlLen/float64(activeCount))*100) / 100,
+				AvgFanOut:      math.Round((sumFanOut/float64(activeCount))*100) / 100,
 			}
 			// Only set downlink averages if we have downlink-active UEs
 			if dlActiveCount > 0 {
-				batch.GlobalStats.AvgDlLogPPS = sumDlLogPPS / float64(dlActiveCount)
-				batch.GlobalStats.AvgDlLen = sumDlLen / float64(dlActiveCount)
-				batch.GlobalStats.AvgPPSRatio = sumPPSRatio / float64(dlActiveCount)
-				batch.GlobalStats.AvgByteRatio = sumByteRatio / float64(dlActiveCount)
+				batch.GlobalStats.AvgDlLogPPS = math.Round((sumDlLogPPS/float64(dlActiveCount))*100) / 100
+				batch.GlobalStats.AvgDlLen = math.Round((sumDlLen/float64(dlActiveCount))*100) / 100
+				batch.GlobalStats.AvgPPSRatio = math.Round((sumPPSRatio/float64(dlActiveCount))*100) / 100
+				batch.GlobalStats.AvgByteRatio = math.Round((sumByteRatio/float64(dlActiveCount))*100) / 100
 			}
 			logger.AnalyzerLog.Debugf("[Poll #%d] Global Stats (from %d UL active, %d DL active): UL[LogPPS=%.2f, Flow=%.2f, Len=%.0f, FanOut=%.2f] DL[LogPPS=%.2f, Len=%.0f, Ratio=%.2f/%.2f]",
 				batch.PollID, activeCount, dlActiveCount,

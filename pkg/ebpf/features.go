@@ -90,21 +90,21 @@ func ConvertToFeatures(m *anlfUeMetricsT, windowDuration float64) models.UeFeatu
 	}
 
 	return models.UeFeatureVector{
-		// Uplink features
-		UlLogPPS:    math.Round(ulLogPPS*10000) / 10000,
-		AvgLen:      math.Round(avgLen*10000) / 10000,
-		IcmpRatio:   math.Round(icmpRatio*10000) / 10000,
-		TcpRatio:    math.Round(tcpRatio*10000) / 10000,
-		UdpRatio:    math.Round(udpRatio*10000) / 10000,
-		SynRatio:    math.Round(synRatio*10000) / 10000,
-		RstRatio:    math.Round(rstRatio*10000) / 10000,
-		NewFlowRate: math.Round(flowRate*10000) / 10000,
-		FanOut:      math.Round(fanOut*10000) / 10000,
-		// Downlink features
-		DlLogPPS:  math.Round(dlLogPPS*10000) / 10000,
-		DlAvgLen:  math.Round(dlAvgLen*10000) / 10000,
-		PPSRatio:  math.Round(ppsRatio*10000) / 10000,
-		ByteRatio: math.Round(byteRatio*10000) / 10000,
-		AckRatio:  math.Round(ackRatio*10000) / 10000,
+		// Uplink features (rounded to 2 decimal places for LLM input consistency)
+		UlLogPPS:    math.Round(ulLogPPS*100) / 100,
+		AvgLen:      math.Round(avgLen*100) / 100,
+		IcmpRatio:   math.Round(icmpRatio*100) / 100,
+		TcpRatio:    math.Round(tcpRatio*100) / 100,
+		UdpRatio:    math.Round(udpRatio*100) / 100,
+		SynRatio:    math.Round(synRatio*100) / 100,
+		RstRatio:    math.Round(rstRatio*100) / 100,
+		NewFlowRate: math.Round(flowRate*100) / 100,
+		FanOut:      math.Round(fanOut*100) / 100,
+		// Downlink features (rounded to 2 decimal places for LLM input consistency)
+		DlLogPPS:  math.Round(dlLogPPS*100) / 100,
+		DlAvgLen:  math.Round(dlAvgLen*100) / 100,
+		PPSRatio:  math.Round(ppsRatio*100) / 100,
+		ByteRatio: math.Round(byteRatio*100) / 100,
+		AckRatio:  math.Round(ackRatio*100) / 100,
 	}
 }

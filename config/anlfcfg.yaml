@@ -36,7 +36,7 @@ configuration:
     serverUrl: http://140.113.208.89:8000  # LLM server endpoint
     timeout: 10  # Request timeout in seconds (10s to handle LLM warm-up and high concurrency)
     maxConcurrent: 100  # Max concurrent HTTP requests to LLM server (must match MaxIdleConnsPerHost)
-    systemPromptPath: /home/vagrant/AnLF/anlf/prompts/anomaly_detection_reasoning.txt  # Path to system prompt file
+    systemPromptPath: /home/vagrant/AnLF/anlf/prompts/anomaly_detection_low_latency.txt  # Path to system prompt file
     batchSize: 20  # Optimal batch size for LLM (5-10 UEs recommended for Qwen 2.5 1.5B)
     temperature: 0.0  # LLM temperature (0.0-2.0, lower = more deterministic)
     maxTokens: 50  # Max response tokens (sufficient for "Risk Score: X.X")

@@ -1,5 +1,4 @@
-
-prompt_low_latency = """[GLOBAL_BASELINE]
+[GLOBAL_BASELINE]
 UL_PPS_Log: {global_ul_log_pps}
 DL_PPS_Log: {global_dl_log_pps}
 UL_Avg_Len: {global_ul_avg_len}

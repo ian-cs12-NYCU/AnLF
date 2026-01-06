@@ -126,34 +126,34 @@ func (e *CsvExporter) exportRecord(rec *models.UeTrafficRecord) error {
 		rec.Supi,
 		rec.UeIp,
 		// PPS (uplink and downlink paired with global values)
-		fmt.Sprintf("%.4f", rec.UlLogPPS),
-		fmt.Sprintf("%.4f", rec.GlobalUlLogPPS),
-		fmt.Sprintf("%.4f", rec.DlLogPPS),
-		fmt.Sprintf("%.4f", rec.GlobalDlLogPPS),
+		fmt.Sprintf("%.2f", rec.UlLogPPS),
+		fmt.Sprintf("%.2f", rec.GlobalUlLogPPS),
+		fmt.Sprintf("%.2f", rec.DlLogPPS),
+		fmt.Sprintf("%.2f", rec.GlobalDlLogPPS),
 		// Packet length (uplink and downlink paired with global values)
-		fmt.Sprintf("%.4f", rec.AvgLen),
-		fmt.Sprintf("%.4f", rec.GlobalUlAvgLen),
-		fmt.Sprintf("%.4f", rec.DlAvgLen),
-		fmt.Sprintf("%.4f", rec.GlobalDlAvgLen),
+		fmt.Sprintf("%.2f", rec.AvgLen),
+		fmt.Sprintf("%.2f", rec.GlobalUlAvgLen),
+		fmt.Sprintf("%.2f", rec.DlAvgLen),
+		fmt.Sprintf("%.2f", rec.GlobalDlAvgLen),
 		// Traffic ratios (with global values)
-		fmt.Sprintf("%.4f", rec.PPSRatio),
-		fmt.Sprintf("%.4f", rec.GlobalPPSRatio),
-		fmt.Sprintf("%.4f", rec.ByteRatio),
-		fmt.Sprintf("%.4f", rec.GlobalByteRatio),
+		fmt.Sprintf("%.2f", rec.PPSRatio),
+		fmt.Sprintf("%.2f", rec.GlobalPPSRatio),
+		fmt.Sprintf("%.2f", rec.ByteRatio),
+		fmt.Sprintf("%.2f", rec.GlobalByteRatio),
 		// Protocol ratios
-		fmt.Sprintf("%.4f", rec.TcpRatio),
-		fmt.Sprintf("%.4f", rec.UdpRatio),
-		fmt.Sprintf("%.4f", rec.IcmpRatio),
+		fmt.Sprintf("%.2f", rec.TcpRatio),
+		fmt.Sprintf("%.2f", rec.UdpRatio),
+		fmt.Sprintf("%.2f", rec.IcmpRatio),
 		// TCP flags
-		fmt.Sprintf("%.4f", rec.SynRatio),
-		fmt.Sprintf("%.4f", rec.RstRatio),
+		fmt.Sprintf("%.2f", rec.SynRatio),
+		fmt.Sprintf("%.2f", rec.RstRatio),
 		// Flow characteristics (with global values)
-		fmt.Sprintf("%.4f", rec.NewFlowRate),
-		fmt.Sprintf("%.4f", rec.GlobalNewFlowRate),
-		fmt.Sprintf("%.4f", rec.FanOut),
-		fmt.Sprintf("%.4f", rec.GlobalFanOut),
+		fmt.Sprintf("%.2f", rec.NewFlowRate),
+		fmt.Sprintf("%.2f", rec.GlobalNewFlowRate),
+		fmt.Sprintf("%.2f", rec.FanOut),
+		fmt.Sprintf("%.2f", rec.GlobalFanOut),
 		// Downlink-specific
-		fmt.Sprintf("%.4f", rec.AckRatio),
+		fmt.Sprintf("%.2f", rec.AckRatio),
 	}
 
 	if err := e.writer.Write(row); err != nil {
