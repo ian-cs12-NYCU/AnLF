@@ -24,5 +24,9 @@ ICMP: {icmp_ratio}
 SYN: {syn_ratio}
 RST: {rst_ratio}
 
-Task: Output Risk Score ONLY.
-Response:"""
+Format: Return a raw JSON object with the following keys ONLY:
+"risk_score": (float 0.0-1.0)
+"classification": (string "normal" or "attack")
+"primary_factor": (string, the most suspicious feature)
+
+Response: Risk Score:

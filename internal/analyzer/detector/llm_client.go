@@ -117,26 +117,42 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 	// Replace global statistics placeholders in system prompt (if globalStats provided)
 	if globalStats != nil {
 		// Uplink global stats - all formatted to 2 decimal places
-		systemContent = replacePlaceholder(systemContent, "global_avg_pps", fmt.Sprintf("%.2f", globalStats.AvgUlLogPPS))
-		systemContent = replacePlaceholder(systemContent, "global_avg_flow", fmt.Sprintf("%.2f", globalStats.AvgNewFlowRate))
-		systemContent = replacePlaceholder(systemContent, "global_avg_ul_len", fmt.Sprintf("%.2f", globalStats.AvgUlLen))
-		systemContent = replacePlaceholder(systemContent, "global_avg_fan_out", fmt.Sprintf("%.2f", globalStats.AvgFanOut))
+		systemContent = replacePlaceholder(systemContent, "global_ul_log_pps", fmt.Sprintf("%.2f", globalStats.AvgUlLogPPS))
+		systemContent = replacePlaceholder(systemContent, "global_new_flow_rate", fmt.Sprintf("%.2f", globalStats.AvgNewFlowRate))
+		systemContent = replacePlaceholder(systemContent, "global_ul_avg_len", fmt.Sprintf("%.2f", globalStats.AvgUlLen))
+		systemContent = replacePlaceholder(systemContent, "global_fan_out", fmt.Sprintf("%.2f", globalStats.AvgFanOut))
 		// Downlink global stats - all formatted to 2 decimal places
-		systemContent = replacePlaceholder(systemContent, "global_avg_dl_pps", fmt.Sprintf("%.2f", globalStats.AvgDlLogPPS))
-		systemContent = replacePlaceholder(systemContent, "global_avg_dl_len", fmt.Sprintf("%.2f", globalStats.AvgDlLen))
-		systemContent = replacePlaceholder(systemContent, "global_avg_pps_ratio", fmt.Sprintf("%.2f", globalStats.AvgPPSRatio))
-		systemContent = replacePlaceholder(systemContent, "global_avg_byte_ratio", fmt.Sprintf("%.2f", globalStats.AvgByteRatio))
+		systemContent = replacePlaceholder(systemContent, "global_dl_log_pps", fmt.Sprintf("%.2f", globalStats.AvgDlLogPPS))
+		systemContent = replacePlaceholder(systemContent, "global_dl_avg_len", fmt.Sprintf("%.2f", globalStats.AvgDlLen))
+		systemContent = replacePlaceholder(systemContent, "global_pps_ratio", fmt.Sprintf("%.2f", globalStats.AvgPPSRatio))
+		systemContent = replacePlaceholder(systemContent, "global_byte_ratio", fmt.Sprintf("%.2f", globalStats.AvgByteRatio))
 	} else {
 		// If no global stats, replace with "N/A"
-		systemContent = replacePlaceholder(systemContent, "global_avg_pps", "N/A")
-		systemContent = replacePlaceholder(systemContent, "global_avg_flow", "N/A")
-		systemContent = replacePlaceholder(systemContent, "global_avg_ul_len", "N/A")
-		systemContent = replacePlaceholder(systemContent, "global_avg_fan_out", "N/A")
-		systemContent = replacePlaceholder(systemContent, "global_avg_dl_pps", "N/A")
-		systemContent = replacePlaceholder(systemContent, "global_avg_dl_len", "N/A")
-		systemContent = replacePlaceholder(systemContent, "global_avg_pps_ratio", "N/A")
-		systemContent = replacePlaceholder(systemContent, "global_avg_byte_ratio", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_ul_log_pps", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_new_flow_rate", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_ul_avg_len", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_fan_out", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_dl_log_pps", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_dl_avg_len", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_pps_ratio", "N/A")
+		systemContent = replacePlaceholder(systemContent, "global_byte_ratio", "N/A")
 	}
+
+	// Replace UE-specific placeholders in system prompt [TARGET_UE] section - all formatted to 2 decimal places
+	systemContent = replacePlaceholder(systemContent, "ul_log_pps", fmt.Sprintf("%.2f", record.UeFeatureVector.UlLogPPS))
+	systemContent = replacePlaceholder(systemContent, "dl_log_pps", fmt.Sprintf("%.2f", record.UeFeatureVector.DlLogPPS))
+	systemContent = replacePlaceholder(systemContent, "ul_avg_len", fmt.Sprintf("%.2f", record.UeFeatureVector.AvgLen))
+	systemContent = replacePlaceholder(systemContent, "dl_avg_len", fmt.Sprintf("%.2f", record.UeFeatureVector.DlAvgLen))
+	systemContent = replacePlaceholder(systemContent, "new_flow_rate", fmt.Sprintf("%.2f", record.UeFeatureVector.NewFlowRate))
+	systemContent = replacePlaceholder(systemContent, "fan_out", fmt.Sprintf("%.2f", record.UeFeatureVector.FanOut))
+	systemContent = replacePlaceholder(systemContent, "pps_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.PPSRatio))
+	systemContent = replacePlaceholder(systemContent, "byte_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.ByteRatio))
+	systemContent = replacePlaceholder(systemContent, "ack_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.AckRatio))
+	systemContent = replacePlaceholder(systemContent, "tcp_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.TcpRatio))
+	systemContent = replacePlaceholder(systemContent, "udp_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.UdpRatio))
+	systemContent = replacePlaceholder(systemContent, "icmp_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.IcmpRatio))
+	systemContent = replacePlaceholder(systemContent, "syn_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.SynRatio))
+	systemContent = replacePlaceholder(systemContent, "rst_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.RstRatio))
 
 	// Build user content by replacing UE-specific placeholders
 	// Start with the last line of system prompt which contains the user data template
@@ -162,25 +178,27 @@ func (c *LLMClient) BuildSingleUEPrompt(record *models.UeTrafficRecord, globalSt
 	if userDataTemplate != "" {
 		userContent = userDataTemplate
 	} else {
-		// Fallback: simple key-value format
-		userContent = "User Data: PPS:{log_pps}, UL_Len:{ul_avg_len}, Flow:{flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}"
+		// Fallback: simple key-value format with correct placeholder names
+		userContent = "User Data: PPS:{ul_log_pps}, UL_Len:{ul_avg_len}, Flow:{new_flow_rate}, Fan:{fan_out}, TCP:{tcp_ratio}, SYN:{syn_ratio}, RST:{rst_ratio}"
 	}
 
 	// Replace UE-specific placeholders (uplink features) - all formatted to 2 decimal places
-	userContent = replacePlaceholder(userContent, "log_pps", fmt.Sprintf("%.2f", record.UeFeatureVector.UlLogPPS))
+	userContent = replacePlaceholder(userContent, "ul_log_pps", fmt.Sprintf("%.2f", record.UeFeatureVector.UlLogPPS))
 	userContent = replacePlaceholder(userContent, "ul_avg_len", fmt.Sprintf("%.2f", record.UeFeatureVector.AvgLen))
-	userContent = replacePlaceholder(userContent, "flow_rate", fmt.Sprintf("%.2f", record.UeFeatureVector.NewFlowRate))
+	userContent = replacePlaceholder(userContent, "new_flow_rate", fmt.Sprintf("%.2f", record.UeFeatureVector.NewFlowRate))
 	userContent = replacePlaceholder(userContent, "fan_out", fmt.Sprintf("%.2f", record.UeFeatureVector.FanOut))
 	userContent = replacePlaceholder(userContent, "tcp_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.TcpRatio))
 	userContent = replacePlaceholder(userContent, "syn_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.SynRatio))
 	userContent = replacePlaceholder(userContent, "rst_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.RstRatio))
 
 	// Replace downlink-specific placeholders (new features) - all formatted to 2 decimal places
-	userContent = replacePlaceholder(userContent, "dl_pps", fmt.Sprintf("%.2f", record.UeFeatureVector.DlLogPPS))
+	userContent = replacePlaceholder(userContent, "dl_log_pps", fmt.Sprintf("%.2f", record.UeFeatureVector.DlLogPPS))
 	userContent = replacePlaceholder(userContent, "dl_avg_len", fmt.Sprintf("%.2f", record.UeFeatureVector.DlAvgLen))
 	userContent = replacePlaceholder(userContent, "pps_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.PPSRatio))
 	userContent = replacePlaceholder(userContent, "byte_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.ByteRatio))
 	userContent = replacePlaceholder(userContent, "ack_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.AckRatio))
+	userContent = replacePlaceholder(userContent, "udp_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.UdpRatio))
+	userContent = replacePlaceholder(userContent, "icmp_ratio", fmt.Sprintf("%.2f", record.UeFeatureVector.IcmpRatio))
 
 	return systemContent, userContent
 }
@@ -262,6 +280,25 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 	// Build prompt with template replacement (includes global stats if provided)
 	systemContent, userContent := c.BuildSingleUEPrompt(record, globalStats)
 
+	// ============================================================================
+	// DEBUG: Log the complete inference request for this UE
+	// ============================================================================
+	logger.AnalyzerLog.Debugf("╔════════════════════════════════════════════════════════════════════════════════╗")
+	logger.AnalyzerLog.Debugf("║ 📤 LLM INFERENCE REQUEST [SUPI: %s]", record.Supi)
+	logger.AnalyzerLog.Debugf("╠════════════════════════════════════════════════════════════════════════════════╣")
+	logger.AnalyzerLog.Debugf("║ System Prompt:")
+	for _, line := range splitLines(systemContent) {
+		logger.AnalyzerLog.Debugf("║   %s", line)
+	}
+	logger.AnalyzerLog.Debugf("╠════════════════════════════════════════════════════════════════════════════════╣")
+	logger.AnalyzerLog.Debugf("║ User Content:")
+	for _, line := range splitLines(userContent) {
+		logger.AnalyzerLog.Debugf("║   %s", line)
+	}
+	logger.AnalyzerLog.Debugf("╠════════════════════════════════════════════════════════════════════════════════╣")
+	logger.AnalyzerLog.Debugf("║ Parameters: temperature=%.2f, max_tokens=%d", c.temperature, c.maxTokens)
+	logger.AnalyzerLog.Debugf("╚════════════════════════════════════════════════════════════════════════════════╝")
+
 	// OpenAI Chat Completions API format (simple request for single UE)
 	openAIReq := map[string]interface{}{
 		"model": "qwen",
@@ -323,7 +360,18 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 	}
 
 	rawContent := openAIResp.Choices[0].Message.Content
-	logger.AnalyzerLog.Debugf("[LLMClient] %s: Raw LLM response: %s", record.Supi, rawContent)
+
+	// ============================================================================
+	// DEBUG: Log the complete LLM response for this UE
+	// ============================================================================
+	logger.AnalyzerLog.Debugf("╔════════════════════════════════════════════════════════════════════════════════╗")
+	logger.AnalyzerLog.Debugf("║ 📥 LLM RESPONSE [SUPI: %s]", record.Supi)
+	logger.AnalyzerLog.Debugf("╠════════════════════════════════════════════════════════════════════════════════╣")
+	logger.AnalyzerLog.Debugf("║ Raw Response:")
+	for _, line := range splitLines(rawContent) {
+		logger.AnalyzerLog.Debugf("║   %s", line)
+	}
+	logger.AnalyzerLog.Debugf("╚════════════════════════════════════════════════════════════════════════════════╝")
 
 	// Extract risk score using multiple regex patterns (fault-tolerant)
 	// Tries all formats: standard "Risk Score: X", JSON "risk_score": X, etc.
@@ -361,7 +409,15 @@ func (c *LLMClient) PredictSingleUE(ctx context.Context, record *models.UeTraffi
 		}, nil
 	}
 
-	logger.AnalyzerLog.Debugf("[LLMClient] ✓ %s: Parsed anomaly score = %.2f (pattern #%d)", record.Supi, score, matchedPattern)
+	// ============================================================================
+	// DEBUG: Log the parsed result
+	// ============================================================================
+	logger.AnalyzerLog.Debugf("╔════════════════════════════════════════════════════════════════════════════════╗")
+	logger.AnalyzerLog.Debugf("║ ✅ INFERENCE RESULT [SUPI: %s]", record.Supi)
+	logger.AnalyzerLog.Debugf("╠════════════════════════════════════════════════════════════════════════════════╣")
+	logger.AnalyzerLog.Debugf("║ Extracted Score: %.2f (from pattern #%d)", score, matchedPattern)
+	logger.AnalyzerLog.Debugf("║ Status: Successfully parsed anomaly score")
+	logger.AnalyzerLog.Debugf("╚════════════════════════════════════════════════════════════════════════════════╝")
 
 	return &models.InferenceResult{
 		Supi:         record.Supi,
