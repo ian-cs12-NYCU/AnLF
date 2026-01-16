@@ -140,6 +140,60 @@ static __always_inline void update_ue_dl_metrics(
     }
 }
 
+// ============================================================================
+// TLS DPI Support Functions
+// ============================================================================
+
+// Safe payload copy with boundary checking
+static __always_inline void copy_payload(__u8 *dst, __u8 *src, int len, void *data_end) {
+    #pragma unroll
+    for (int i = 0; i < 128; i++) {
+        if (i >= len || (void *)(src + i + 1) > data_end) {
+            dst[i] = 0;
+            break;
+        }
+        dst[i] = src[i];
+    }
+}
+
+// Check and capture TLS Client Hello packet
+static __always_inline int check_and_capture_tls(
+    struct xdp_md *ctx, 
+    struct iphdr *iph, 
+    struct tcphdr *tcph, 
+    void *data_end) 
+{
+    // Calculate payload start position
+    void *payload_start = (void *)tcph + (tcph->doff * 4);
+    int payload_len = (int)(data_end - payload_start);
+
+    // 1. Basic filter: must have payload
+    if (payload_start + 1 > data_end || payload_len <= 0) return 0;
+
+    // 2. Feature filter: check TLS Handshake Header (0x16)
+    __u8 first_byte = *(__u8 *)payload_start;
+    if (first_byte != 0x16) return 0;
+
+    // 3. Prepare event
+    struct tls_event_t event = {};
+    event.src_ip = iph->saddr;
+    event.dst_ip = iph->daddr;
+    event.src_port = tcph->source;
+    event.dst_port = tcph->dest;
+    event.payload_len = payload_len > 128 ? 128 : payload_len;
+
+    // 4. Copy payload (truncate to 128 bytes)
+    copy_payload(event.payload, payload_start, payload_len, data_end);
+
+    // 5. Send event to userspace (Fail-Open: ignore if buffer is full)
+    if (bpf_perf_event_output(ctx, &tls_events, BPF_F_CURRENT_CPU, &event, sizeof(event)) != 0) {
+        // Buffer full or other error, silently ignore
+        // Original traffic statistics unaffected
+    }
+
+    return 1;  // Captured successfully
+}
+
 static __always_inline int process_inner_ip(
     struct xdp_md *ctx,
     struct iphdr *iph,
@@ -184,6 +238,35 @@ static __always_inline int process_inner_ip(
             __u16 flags_word = *(__u16 *)((void *)tcph + 12);
             tcp_flags = (flags_word >> 8) & 0xFF;
             dst_port = bpf_ntohs(tcph->dest);
+            
+            // Check for HTTPS (Port 443) TLS capture
+            if (dst_port == 443) {
+                struct flow_key fkey = {};
+                fkey.src_ip = inner_src_ip;
+                fkey.dst_ip = inner_dst_ip;
+                fkey.proto = proto;
+                fkey.src_port = bpf_ntohs(tcph->source);
+                fkey.dst_port = dst_port;
+
+                __u8 *flow_state = bpf_map_lookup_elem(&tls_state_map, &fkey);
+                
+                // Capture TLS if not yet captured for this flow
+                // Bitmask: 0x01=Seen, 0x02=TLS_Captured
+                if (!flow_state || !(*flow_state & 0x02)) {
+                    // Try to capture
+                    if (check_and_capture_tls(ctx, iph, tcph, data_end)) {
+                        // Capture succeeded, update state
+                        __u8 new_state = (flow_state ? *flow_state : 0) | 0x02 | 0x01;
+                        bpf_map_update_elem(&tls_state_map, &fkey, &new_state, BPF_ANY);
+                    } else {
+                        // Capture failed (not TLS), but mark as seen
+                        if (!flow_state) {
+                            __u8 init_state = 0x01;
+                            bpf_map_update_elem(&tls_state_map, &fkey, &init_state, BPF_ANY);
+                        }
+                    }
+                }
+            }
             
             // Track new flows on SYN packets
             if (tcp_flags & 0x02) {

@@ -21,6 +21,8 @@ type TrafficMonitor struct {
 	pollInterval   time.Duration
 	windowSeconds  float64
 	topNExporter   exporter.Exporter
+	tlsCache       *TlsEventCache
+	tlsReader      *TlsEventReader
 	stopChan       chan struct{}
 	doneChan       chan struct{}
 }
@@ -39,6 +41,10 @@ func NewTrafficMonitor(
 		topNExp = nil
 	}
 
+	// Create TLS event cache and reader
+	tlsCache := NewTlsEventCache()
+	tlsReader := NewTlsEventReader(tlsCache)
+
 	return &TrafficMonitor{
 		ebpfMgr:        ebpfMgr,
 		ueDataProvider: ueDataProvider,
@@ -46,6 +52,8 @@ func NewTrafficMonitor(
 		pollInterval:   pollInterval,
 		windowSeconds:  pollInterval.Seconds(),
 		topNExporter:   topNExp,
+		tlsCache:       tlsCache,
+		tlsReader:      tlsReader,
 		stopChan:       make(chan struct{}),
 		doneChan:       make(chan struct{}),
 	}
@@ -54,6 +62,16 @@ func NewTrafficMonitor(
 // Start implements Lifecycle.Start
 func (m *TrafficMonitor) Start(ctx context.Context) error {
 	logger.MonitorLog.Infof("Starting TrafficMonitor (poll interval: %v)...", m.pollInterval)
+
+	// Start TLS event reader
+	tlsEventsMap, err := m.ebpfMgr.GetTlsEventsMap()
+	if err != nil {
+		logger.MonitorLog.Warnf("Failed to get TLS events map: %v", err)
+	} else if tlsEventsMap != nil {
+		if err := m.tlsReader.Start(tlsEventsMap); err != nil {
+			logger.MonitorLog.Warnf("Failed to start TLS event reader: %v", err)
+		}
+	}
 
 	go m.pollLoop(ctx)
 
@@ -64,6 +82,9 @@ func (m *TrafficMonitor) Start(ctx context.Context) error {
 // Stop implements Lifecycle.Stop
 func (m *TrafficMonitor) Stop(timeout time.Duration) error {
 	logger.MonitorLog.Info("Stopping TrafficMonitor...")
+
+	// Stop TLS reader
+	m.tlsReader.Stop()
 
 	close(m.stopChan)
 
@@ -164,6 +185,15 @@ func (m *TrafficMonitor) pollAndSend() {
 				Supi:            supi,
 				UeIp:            ueIp,
 			}
+		}
+
+		// Check for TLS sample in cache
+		if tlsHex, ok := m.tlsCache.Pop(ueIp); ok {
+			record.HasTlsSample = true
+			record.TlsHelloHex = tlsHex
+			logger.MonitorLog.Debugf("Added TLS sample for UE %s: %d bytes", ueIp, len(tlsHex)/2)
+		} else {
+			record.HasTlsSample = false
 		}
 
 		records = append(records, record)

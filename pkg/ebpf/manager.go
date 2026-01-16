@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -196,6 +197,14 @@ func (m *Manager) Close() error {
 	}
 
 	return nil
+}
+
+// GetTlsEventsMap returns the TLS events perf buffer map
+func (m *Manager) GetTlsEventsMap() (*ebpf.Map, error) {
+	if m.objs.TlsEvents == nil {
+		return nil, fmt.Errorf("TLS events map not loaded")
+	}
+	return m.objs.TlsEvents, nil
 }
 
 func IPFromNetByteOrder(ipNet uint32) net.IP {

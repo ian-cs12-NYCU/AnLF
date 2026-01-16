@@ -30,6 +30,10 @@ type UeTrafficRecord struct {
 	Supi      string `json:"supi" csv:"supi"`
 	UeIp      string `json:"ip" csv:"ue_ip"`
 	PollID    uint64 `json:"-" csv:"-"` // Poll sequence number (for logging only, not exported)
+	
+	// TLS DPI fields
+	HasTlsSample bool   `json:"has_tls_sample"`
+	TlsHelloHex  string `json:"tls_hello_hex,omitempty"`
 
 	// Global network statistics for this batch window (uplink)
 	GlobalUlLogPPS    float64 `json:"global_ul_log_pps" csv:"global_ul_log_pps"`       // Renamed from GlobalAvgPPS for clarity

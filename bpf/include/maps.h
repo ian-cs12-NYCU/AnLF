@@ -78,4 +78,34 @@ struct {
     __uint(max_entries, 65536);  // 64K IPs
 } ip_stats_map SEC(".maps");
 
+// ============================================================================
+// TLS DPI Support
+// ============================================================================
+
+// TLS event structure for transmitting to userspace
+struct tls_event_t {
+    __u32 src_ip;        // Network Byte Order
+    __u32 dst_ip;        // Network Byte Order
+    __u16 src_port;      // Network Byte Order
+    __u16 dst_port;      // Network Byte Order
+    __u32 payload_len;   // Actual payload length
+    __u8  payload[128];  // Captured payload: min(payload_len, 128)
+};
+
+// Perf Buffer for streaming TLS events to userspace
+struct {
+    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+    __uint(key_size, sizeof(__u32));
+    __uint(value_size, sizeof(__u32));
+} tls_events SEC(".maps");
+
+// TLS capture state tracking (LRU map with automatic eviction)
+// For each flow, track whether we've already captured the TLS hello
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __type(key, struct flow_key);
+    __type(value, __u8);  // Bitmask: 0x01=Seen, 0x02=TLS_Captured
+    __uint(max_entries, 65536);
+} tls_state_map SEC(".maps");
+
 #endif
