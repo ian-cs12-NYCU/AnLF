@@ -73,8 +73,48 @@ class InferenceAnalyzer:
         self.df['ue_id'] = self.df['supi'].apply(extract_ue_id)
         self.df['is_attacker'] = self.df['ue_id'].isin(self.attacker_ids)
     
+    def _calculate_confusion_matrix_timestamp_level(self, df_all: pd.DataFrame) -> Dict[str, int]:
+        """Calculate confusion matrix at timestamp level (considering all records)"""
+        # Create ground truth labels for all records
+        def extract_ue_id(imsi):
+            parts = imsi.split('-')
+            if len(parts) > 1:
+                try:
+                    full_num = int(parts[-1])
+                    ue_id = full_num % 1000
+                    return ue_id
+                except:
+                    return None
+            return None
+        
+        df_all['ue_id'] = df_all['supi'].apply(extract_ue_id)
+        df_all['is_attacker'] = df_all['ue_id'].isin(self.attacker_ids)
+        
+        # True labels: is_attacker
+        y_true = df_all['is_attacker'].astype(int)
+        
+        # Convert string boolean values to actual booleans
+        is_blocked = df_all['is_blocked'].astype(str).str.strip().str.lower().isin(['true', '1', 'yes'])
+        attack_detected = df_all['attack_detected'].astype(str).str.strip().str.lower().isin(['true', '1', 'yes'])
+        
+        # Predicted positive if blocked OR attack detected
+        y_pred = (is_blocked | attack_detected).astype(int)
+        
+        tp = np.sum((y_true == 1) & (y_pred == 1))
+        fp = np.sum((y_true == 0) & (y_pred == 1))
+        tn = np.sum((y_true == 0) & (y_pred == 0))
+        fn = np.sum((y_true == 1) & (y_pred == 0))
+        
+        return {
+            'TP': int(tp),
+            'FP': int(fp),
+            'TN': int(tn),
+            'FN': int(fn),
+            'Total': len(df_all)
+        }
+    
     def _calculate_confusion_matrix(self) -> Dict[str, int]:
-        """Calculate confusion matrix"""
+        """Calculate confusion matrix (user-level, for backward compatibility)"""
         # True labels: is_attacker
         # Predicted labels: is_blocked or attack_detected
         y_true = self.df['is_attacker'].astype(int)
@@ -142,8 +182,13 @@ class InferenceAnalyzer:
         print(f"Total Attackers: {sum(self.df['is_attacker'])}")
         print(f"Total Normal Users: {sum(~self.df['is_attacker'])}\n")
         
-        # Calculate confusion matrix
-        cm = self._calculate_confusion_matrix()
+        # Read full data for timestamp-level analysis
+        df_all = pd.read_csv(self.csv_path)
+        df_all.columns = df_all.columns.str.strip()
+        print(f"Total Records (all timestamps): {len(df_all)}\n")
+        
+        # Calculate confusion matrix at timestamp level
+        cm = self._calculate_confusion_matrix_timestamp_level(df_all)
         self.metrics['confusion_matrix'] = cm
         
         # Calculate KPI

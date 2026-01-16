@@ -1,5 +1,86 @@
 # AnLF 系統架構與資料流向
 
+## 
+```mermaid
+graph LR
+    %% =========================================
+    %% 1. 全域樣式定義
+    %% =========================================
+    classDef default font-family:Arial,sans-serif;
+    %% 虛線外框容器
+    classDef container fill:#fff,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5;
+    %% 一般組件
+    classDef component fill:#fff,stroke:#000,stroke-width:1px;
+    %% 核心態 (藍色系)
+    classDef kernel fill:#e1f5fe,stroke:#0277bd,stroke-width:2px;
+    %% 使用者態 Server (橘色系)
+    classDef user_server fill:#fff3e0,stroke:#ef6c00,stroke-width:2px;
+    %% 雲端組件 (紫色系)
+    classDef cloud fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+
+    %% =========================================
+    %% 2. 節點與結構定義
+    %% =========================================
+    
+    %% --- 左側：使用者設備 ---
+    UE[("UEs (5G Devices)")]:::component
+
+    %% --- 中間：邊緣基礎設施 (Edge Infrastructure) ---
+    subgraph Edge_Node ["Edge Infrastructure / UPF Host"]
+        direction TB
+        
+        UPF["UPF (User Plane Function)"]:::component
+        
+        %% --- AnLF 詳細結構 ---
+        subgraph AnLF_Container ["AnLF (Analytics Logical Function)"]
+            direction BT
+            
+            eBPF["eBPF Datapath Collector<br/>(Kernel Space)"]:::kernel
+            LLM_Server["LLM Inference Server<br/>(User Space)"]:::user_server
+            
+            %% AnLF 內部的高速通道
+            eBPF -- "Filtered Events & Features<br/>(High-Speed Path)" --> LLM_Server
+        end
+        
+        %% UPF 掛載 eBPF
+        UPF <==>|"Attach / Mirror"| eBPF
+    end
+
+    %% --- 右側：中心雲端 (Central Cloud) ---
+    subgraph Central_Cloud ["Central Cloud / Core Network"]
+        direction TB
+        SMF["SMF (Session Management Function)"]:::component
+        MTLF["MTLF (Model Training Logical Function)"]:::cloud
+    end
+
+    %% =========================================
+    %% 3. 外部連接關係
+    %% =========================================
+    
+    %% (Link 0, 1 是內部連接, 這裡從外部開始算)
+    
+    %% 資料平面
+    UE =="N3 Interface (GTP-U Traffic)"==> UPF
+    
+    %% 控制平面上下文
+    SMF -- "Nsmf Data Collection<br/>(Session Context / TEID Mapping)" --> LLM_Server
+
+    %% 【關鍵路徑】模型更新 (LoRA)
+    MTLF == "Nnwdaf_MLModelProvisioning<br/>[Critical Path: LoRA Adapters Update]" ==> LLM_Server
+
+    %% =========================================
+    %% 4. 樣式調整 (修復部分)
+    %% =========================================
+    %% 應用容器樣式
+    class Edge_Node,Central_Cloud container
+    class AnLF_Container component
+    
+    %% 強制指定最後一條連線 (MTLF -> LLM) 為紅色粗虛線
+    %% 注意：linkStyle 的編號是根據連線定義的順序 (0, 1, 2, 3, 4)
+    %% 0: eBPF->LLM, 1: UPF<->eBPF, 2: UE->UPF, 3: SMF->LLM, 4: MTLF->LLM
+    linkStyle 4 stroke:#d32f2f,stroke-width:4px,stroke-dasharray: 5 5;
+```
+
 ## 1. 系統總覽 (System Overview)
 
 ```mermaid
