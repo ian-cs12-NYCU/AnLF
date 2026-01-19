@@ -97,25 +97,26 @@ func TestTlsEventCStructLayout(t *testing.T) {
 }
 
 func TestIPConversion(t *testing.T) {
-	// Test network byte order to IP string conversion
-	// Network byte order is big-endian for IPv4
-	// So 0x0a3c0001 represents 10.60.0.1 in big-endian
+	// Test IP conversion after binary.Read with LittleEndian
+	// When eBPF sends iph->saddr (0x0a3c0001 for 10.60.0.1 in network/big-endian),
+	// binary.Read(..., LittleEndian) will read it as uint32 with byte order reversed
+	// So we need LittleEndian.PutUint32 to restore the original byte order
 	tests := []struct {
-		netByteOrder uint32
-		expected     string
+		ebpfValue uint32 // Value as received by binary.Read with LittleEndian
+		expected  string
 	}{
-		{0x0a3c0001, "10.60.0.1"},       // 10.60.0.1 in network byte order (big-endian)
-		{0x0a3c0002, "10.60.0.2"},       // 10.60.0.2
-		{0x7f000001, "127.0.0.1"},       // loopback
-		{0xffffffff, "255.255.255.255"}, // broadcast
+		{0x01643c0a, "10.60.100.1"},     // eBPF sends 0x0a3c6401, read as little-endian
+		{0x02003c0a, "10.60.0.2"},       // eBPF sends 0x0a3c0002
+		{0x0100007f, "127.0.0.1"},       // loopback
+		{0xffffffff, "255.255.255.255"}, // broadcast (same in both endians)
 	}
 
 	for _, tt := range tests {
 		ipBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(ipBytes, tt.netByteOrder)
+		binary.LittleEndian.PutUint32(ipBytes, tt.ebpfValue)
 		result := net.IP(ipBytes).String()
 		if result != tt.expected {
-			t.Fatalf("IP conversion failed: got %s, expected %s (input: 0x%08x)", result, tt.expected, tt.netByteOrder)
+			t.Fatalf("IP conversion failed: got %s, expected %s (input: 0x%08x)", result, tt.expected, tt.ebpfValue)
 		}
 	}
 }
@@ -140,10 +141,11 @@ func TestHexEncoding(t *testing.T) {
 }
 
 func TestTlsEventParsePayload(t *testing.T) {
-	// Simulate parsing a TLS event
+	// Simulate parsing a TLS event after binary.Read with LittleEndian
+	// If eBPF sends 0x0a3c6401, binary.Read will interpret as 0x01643c0a
 	event := TlsEventC{
-		SrcIP:      0x0a3c0001,
-		DstIP:      0x0a3c0002,
+		SrcIP:      0x01643c0a, // 10.60.100.1 after LittleEndian read
+		DstIP:      0x02003c0a, // 10.60.0.2 after LittleEndian read
 		SrcPort:    0x1234,
 		DstPort:    0x01bb,
 		PayloadLen: 5,
@@ -153,9 +155,9 @@ func TestTlsEventParsePayload(t *testing.T) {
 	tlsData := []byte{0x16, 0x03, 0x01, 0x00, 0x50}
 	copy(event.Payload[:], tlsData)
 
-	// Convert IP
+	// Convert IP (same as parseAndCache function)
 	ipBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(ipBytes, event.SrcIP)
+	binary.LittleEndian.PutUint32(ipBytes, event.SrcIP)
 	ueIP := net.IP(ipBytes).String()
 
 	// Convert payload to hex
@@ -166,7 +168,7 @@ func TestTlsEventParsePayload(t *testing.T) {
 	hexPayload := hex.EncodeToString(event.Payload[:validLen])
 
 	// Verify
-	if ueIP != "10.60.0.1" {
+	if ueIP != "10.60.100.1" {
 		t.Fatalf("IP conversion failed: got %s", ueIP)
 	}
 	if hexPayload != "1603010050" {

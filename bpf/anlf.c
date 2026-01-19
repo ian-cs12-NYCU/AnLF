@@ -165,12 +165,15 @@ static __always_inline int check_and_capture_tls(
 {
     // Calculate payload start position
     void *payload_start = (void *)tcph + (tcph->doff * 4);
-    int payload_len = (int)(data_end - payload_start);
-
+    
     // 1. Basic filter: must have payload
-    if (payload_start + 1 > data_end || payload_len <= 0) return 0;
+    if (payload_start >= data_end) return 0;
+    
+    int payload_len = (int)(data_end - payload_start);
+    if (payload_len <= 0) return 0;
 
     // 2. Feature filter: check TLS Handshake Header (0x16)
+    if (payload_start + 1 > data_end) return 0;
     __u8 first_byte = *(__u8 *)payload_start;
     if (first_byte != 0x16) return 0;
 
@@ -233,7 +236,9 @@ static __always_inline int process_inner_ip(
     
     // Extract TCP flags and track new flows
     if (proto == IPPROTO_TCP) {
-        struct tcphdr *tcph = (struct tcphdr *)((void *)iph + sizeof(*iph));
+        // Use IHL (Internet Header Length) to skip IP header + options
+        __u32 ip_hdr_len = iph->ihl * 4;
+        struct tcphdr *tcph = (struct tcphdr *)((void *)iph + ip_hdr_len);
         if ((void *)tcph + sizeof(*tcph) <= data_end) {
             __u16 flags_word = *(__u16 *)((void *)tcph + 12);
             tcp_flags = (flags_word >> 8) & 0xFF;

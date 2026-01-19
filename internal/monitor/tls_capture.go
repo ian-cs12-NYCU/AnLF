@@ -141,10 +141,11 @@ func (r *TlsEventReader) parseAndCache(rawSample []byte) error {
 	}
 
 	// Convert source IP from network byte order to string
-	// C side sends raw iph->saddr which is typically in network byte order
-	// We need to convert to host byte order for string representation
+	// eBPF sends iph->saddr in network byte order (big-endian)
+	// When read with LittleEndian, the uint32 is byte-swapped
+	// So we need to use LittleEndian.PutUint32 to get correct byte order
 	ipBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(ipBytes, event.SrcIP)
+	binary.LittleEndian.PutUint32(ipBytes, event.SrcIP)
 	ueIP := net.IP(ipBytes).String()
 
 	// Validate payload length
