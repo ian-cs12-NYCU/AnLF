@@ -89,7 +89,7 @@ struct tls_event_t {
     __u16 src_port;      // Network Byte Order
     __u16 dst_port;      // Network Byte Order
     __u32 payload_len;   // Actual payload length
-    __u8  payload[128];  // Captured payload: min(payload_len, 128)
+    __u8  payload[10];   // Captured payload: min(payload_len, 10)
 };
 
 // Perf Buffer for streaming TLS events to userspace

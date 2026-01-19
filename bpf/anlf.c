@@ -147,7 +147,7 @@ static __always_inline void update_ue_dl_metrics(
 // Safe payload copy with boundary checking
 static __always_inline void copy_payload(__u8 *dst, __u8 *src, int len, void *data_end) {
     #pragma unroll
-    for (int i = 0; i < 128; i++) {
+    for (int i = 0; i < 10; i++) {
         if (i >= len || (void *)(src + i + 1) > data_end) {
             dst[i] = 0;
             break;
@@ -183,9 +183,9 @@ static __always_inline int check_and_capture_tls(
     event.dst_ip = iph->daddr;
     event.src_port = tcph->source;
     event.dst_port = tcph->dest;
-    event.payload_len = payload_len > 128 ? 128 : payload_len;
+    event.payload_len = payload_len > 10 ? 10 : payload_len;
 
-    // 4. Copy payload (truncate to 128 bytes)
+    // 4. Copy payload (truncate to 10 bytes)
     copy_payload(event.payload, payload_start, payload_len, data_end);
 
     // 5. Send event to userspace (Fail-Open: ignore if buffer is full)

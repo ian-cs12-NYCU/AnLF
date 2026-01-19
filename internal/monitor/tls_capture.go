@@ -20,7 +20,7 @@ type TlsEventC struct {
 	SrcPort    uint16
 	DstPort    uint16
 	PayloadLen uint32
-	Payload    [128]byte
+	Payload    [10]byte
 }
 
 // TlsEventCache provides thread-safe caching of TLS events
@@ -150,8 +150,8 @@ func (r *TlsEventReader) parseAndCache(rawSample []byte) error {
 
 	// Validate payload length
 	validLen := int(event.PayloadLen)
-	if validLen > 128 {
-		validLen = 128
+	if validLen > 10 {
+		validLen = 10
 	}
 	if validLen < 0 {
 		validLen = 0
