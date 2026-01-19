@@ -64,6 +64,8 @@ func NewCsvExporter(baseDir string) (*CsvExporter, error) {
 		"fan_out", "global_fan_out",
 		// Downlink-specific
 		"ack_ratio",
+		// TLS DPI
+		"has_tls_sample", "tls_hello_hex",
 	}
 	if err := writer.Write(header); err != nil {
 		file.Close()
@@ -154,6 +156,9 @@ func (e *CsvExporter) exportRecord(rec *models.UeTrafficRecord) error {
 		fmt.Sprintf("%.2f", rec.GlobalFanOut),
 		// Downlink-specific
 		fmt.Sprintf("%.2f", rec.AckRatio),
+		// TLS DPI
+		strconv.FormatBool(rec.HasTlsSample),
+		rec.TlsHelloHex,
 	}
 
 	if err := e.writer.Write(row); err != nil {

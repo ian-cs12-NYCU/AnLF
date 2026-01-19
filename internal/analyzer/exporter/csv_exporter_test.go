@@ -111,13 +111,17 @@ func TestCsvExporter_ExportAndShutdown(t *testing.T) {
 		t.Errorf("Data row missing UE IP: %s", lines[1])
 	}
 	// Check downlink feature values
-	if !strings.Contains(lines[1], "1000.0000") { // dl_pps
+	if !strings.Contains(lines[1], "1000.00") { // dl_pps
 		t.Errorf("Data row missing dl_pps value: %s", lines[1])
 	}
-	if !strings.Contains(lines[1], "1.5000") { // pps_ratio
+	if !strings.Contains(lines[1], "1.50") { // pps_ratio
 		t.Errorf("Data row missing pps_ratio value: %s", lines[1])
 	}
-	if !strings.Contains(lines[1], "3.0000") {
+	if !strings.Contains(lines[1], "3.00") {
 		t.Errorf("Data row missing global_avg_pps value: %s", lines[1])
+	}
+	// Check TLS DPI columns in header
+	if !strings.Contains(lines[0], "has_tls_sample") || !strings.Contains(lines[0], "tls_hello_hex") {
+		t.Errorf("Header missing TLS DPI columns: %s", lines[0])
 	}
 }

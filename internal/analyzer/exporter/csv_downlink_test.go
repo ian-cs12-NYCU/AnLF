@@ -112,9 +112,10 @@ func TestCsvExporter_DownlinkFeatures(t *testing.T) {
 	// 2 TCP flags (syn_ratio, rst_ratio) +
 	// 2 pairs flow rate (new_flow_rate, global_new_flow_rate) +
 	// 2 pairs fan out (fan_out, global_fan_out) +
-	// 1 downlink ACK (ack_ratio)
-	// = 25 columns total
-	expectedColumns := 25
+	// 1 downlink ACK (ack_ratio) +
+	// 2 TLS DPI (has_tls_sample, tls_hello_hex)
+	// = 27 columns total
+	expectedColumns := 27
 	if len(rows[0]) != expectedColumns {
 		t.Errorf("Expected %d columns, got %d. Header: %v", expectedColumns, len(rows[0]), rows[0])
 	}

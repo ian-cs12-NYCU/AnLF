@@ -104,9 +104,9 @@ func TestIPConversion(t *testing.T) {
 		netByteOrder uint32
 		expected     string
 	}{
-		{0x0a3c0001, "10.60.0.1"},   // 10.60.0.1 in network byte order (big-endian)
-		{0x0a3c0002, "10.60.0.2"},   // 10.60.0.2
-		{0x7f000001, "127.0.0.1"},   // loopback
+		{0x0a3c0001, "10.60.0.1"},       // 10.60.0.1 in network byte order (big-endian)
+		{0x0a3c0002, "10.60.0.2"},       // 10.60.0.2
+		{0x7f000001, "127.0.0.1"},       // loopback
 		{0xffffffff, "255.255.255.255"}, // broadcast
 	}
 
