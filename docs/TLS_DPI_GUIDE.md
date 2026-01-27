@@ -23,7 +23,7 @@
 - 🎯 **自動捕獲**: HTTPS 流量 (Port 443) 的 TLS Client Hello
 - 🔒 **防重複**: 每個連接僅採樣一次
 - ⚡ **高效**: < 5% CPU 開銷
-- 💾 **流式處理**: 128 字節 Payload 快照
+- 💾 **流式處理**: 10 字節 Payload 快照
 - 🛡️ **可靠**: Fail-Open 保證流量不丟
 
 ---
@@ -52,9 +52,9 @@ Kernel Space (eBPF/XDP)
 - 透過 Perf Buffer 傳送至 Userspace
 
 **User Space (Go)**
-- 採用緩衝與合併 (Buffer & Merge) 模式
-- 背景 Goroutine 監聽 Perf 事件並暫存於 Cache
-- 週期性迴圈將 TLS Payload 與 UE 統計數據合併
+- 採用 **Sticky State 模式** (持久化快取)
+- 背景 Goroutine 監聽 Perf 事件並寫入 Cache
+- 週期性迴圈讀取 TLS Payload，但 **不刪除** (允許跨 Window 重複使用)
 - 生成包含 TLS HEX 的 JSON/CSV 報告
 
 ---
@@ -127,7 +127,7 @@ if (!flow_state || !(*flow_state & 0x02)) {
 
 **問題**: Perf Reader (Goroutine) 與 Metrics Collector (Main Loop) 同時存取資料
 
-**解法**: 實作帶有 `sync.RWMutex` 的 `TlsEventCache`
+**解法**: 實作帶有 `sync.RWMutex` 的 `TlsEventCache`，使用 **Sticky State** 模式
 
 ```go
 type TlsEventCache struct {
@@ -135,16 +135,27 @@ type TlsEventCache struct {
     data map[string]string  // UE IP -> Hex String
 }
 
-func (c *TlsEventCache) Pop(ueIP string) (string, bool) {
-    c.mu.Lock()
-    defer c.mu.Unlock()
+// Get: 讀取但不刪除 (Sticky State)
+func (c *TlsEventCache) Get(ueIP string) (string, bool) {
+    c.mu.RLock()  // 讀鎖，效能較佳
+    defer c.mu.RUnlock()
     val, ok := c.data[ueIP]
-    if ok {
-        delete(c.data, ueIP)
-    }
     return val, ok
 }
+
+// Add: 更新或新增 (自動覆蓋舊資料)
+func (c *TlsEventCache) Add(ueIP string, hex string) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.data[ueIP] = hex
+}
 ```
+
+**Sticky State 特性**:
+- 第一次捕獲: `has_tls_sample=true`, `tls_hello_hex="160301..."`
+- 之後的 Window: 繼續輸出相同的 Hex (即使沒有新封包)
+- UE 重連: eBPF 捕獲新的 Hello → Cache 自動更新
+- 優點: LLM 可持續分析，無須等待下次 TLS 握手
 
 #### 6. Fail-Open 可靠性
 
@@ -172,7 +183,7 @@ struct tls_event_t {
     __u16 src_port;      // Network Byte Order
     __u16 dst_port;      // Network Byte Order
     __u32 payload_len;   // 實際 Payload 長度
-    __u8  payload[128];  // 截取長度：min(payload_len, 128)
+    __u8  payload[10];   // 截取長度：min(payload_len, 10)
 };
 
 // Perf Event Map
@@ -192,7 +203,7 @@ type TlsEventC struct {
     SrcPort    uint16
     DstPort    uint16
     PayloadLen uint32
-    Payload    [128]byte
+    Payload    [10]byte
 }
 
 type TlsEventCache struct {
@@ -220,10 +231,17 @@ Go Perf Reader (Goroutine)
     └─ cache.Add(ueIP, hexPayload)
          ↓
 CollectMetrics (每 5 秒)
-    ├─ cache.Pop(ueIP)
+    ├─ cache.Get(ueIP)  // 讀取但不刪除 (Sticky State)
     └─ 合併至 UeTrafficRecord.TlsHelloHex
          ↓
     JSON/CSV Output
+```
+
+**行為說明**:
+- **T=0s**: UE 發起 HTTPS 連線 → eBPF 捕獲 Client Hello → Cache 寫入 `"160301..."`
+- **T=5s**: UE Keep-Alive 傳輸，無新 Hello → Collector 讀到舊資料 → 輸出相同 Hex
+- **T=10s**: UE 重連 → eBPF 捕獲新 Hello → Cache 自動更新 → 輸出新 Hex
+- **T=15s**: UE 閒置，無流量 → 系統清除 Metrics Map 項目 → 無輸出 (符合邏輯)
 ```
 
 ### 輸出格式

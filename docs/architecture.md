@@ -1,3 +1,57 @@
+# Spec 下的 AnLF, MTLF 互動
+
+```mermaid
+
+---
+config:
+  theme: mc
+---
+sequenceDiagram
+    autonumber
+
+    %% =========================================
+    %% 參與者樣式設定 (低飽和正色)
+    %% =========================================
+    %% AnLF: 淡藍色 (Light Blue #e1f5fe)
+    %% MTLF: 淡橘色 (Light Orange #fff3e0)
+    participant AnLF as NWDAF (AnLF)
+    participant MTLF as NWDAF (MTLF)
+
+    Note over AnLF: Edge Infrastructure
+    Note over MTLF: Central Cloud
+
+    %% =========================================
+    %% 階段一：訂閱服務 (使用極淺灰色背景 #f9f9f9)
+    %% =========================================
+    rect rgb(249, 249, 249)
+        Note over AnLF, MTLF: Phase 1: Service Subscription (Clause 6.2A)
+        AnLF->>MTLF: Nnwdaf_MLModelProvisioning_Subscribe Request
+        Note right of AnLF: Parameters: Analytics ID, Filter Info
+        MTLF-->>AnLF: Nnwdaf_MLModelProvisioning_Subscribe Response
+    end
+
+    %% 階段二：模型訓練 (保持純白背景，對比出參與者顏色)
+    Note over MTLF: Phase 2: Model Training Logic (Clause 5.1)
+    MTLF->>MTLF: Train ML Model
+    MTLF->>MTLF: Determine "ML Model Information" (Clause 6.2A.2)
+    MTLF->>MTLF: Determine "Model Interoperability Info" (Clause 6.2A.1)
+
+    %% =========================================
+    %% 階段三：模型供應 (使用極淺灰色背景 #f9f9f9)
+    %% =========================================
+    rect rgb(249, 249, 249)
+        Note over AnLF, MTLF: Phase 3: Provisioning Procedure (Clause 7.5)
+        MTLF-->>AnLF: Nnwdaf_MLModelProvisioning_Notify Request
+        Note left of MTLF: Payload: Analytics ID, Model Info, Interoperability Info
+        
+        AnLF->>AnLF: Update ML Model & Execute Inference
+        Note right of AnLF: Derives analytics information (Clause 5.1)
+        
+        AnLF-->>MTLF: Nnwdaf_MLModelProvisioning_Notify Response
+        Note right of AnLF: 204 No Content
+    end
+```
+
 # AnLF 系統架構與資料流向
 
 ## 

@@ -38,21 +38,19 @@ func NewTlsEventCache() *TlsEventCache {
 	}
 }
 
-// Add stores a TLS event in the cache
+// Add stores a TLS event in the cache (overwrites if exists)
 func (c *TlsEventCache) Add(ip string, hexPayload string) {
 	c.Lock()
 	defer c.Unlock()
 	c.data[ip] = hexPayload
 }
 
-// Pop retrieves and removes a TLS event from the cache
-func (c *TlsEventCache) Pop(ip string) (string, bool) {
-	c.Lock()
-	defer c.Unlock()
+// Get retrieves a TLS event from the cache without removing it (Sticky State)
+// This allows TLS hex data to persist across multiple collection windows
+func (c *TlsEventCache) Get(ip string) (string, bool) {
+	c.RLock()
+	defer c.RUnlock()
 	val, ok := c.data[ip]
-	if ok {
-		delete(c.data, ip)
-	}
 	return val, ok
 }
 

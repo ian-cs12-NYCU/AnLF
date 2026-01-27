@@ -29,7 +29,7 @@ configuration:
   
   smf:
     url: http://127.0.0.2:8000  # SMF OAM API base URL
-    pollInterval: 5  # Fetch UE data from SMF every 5 seconds
+    pollInterval: 3  # Fetch UE data from SMF every 5 seconds
   
   anomalyDetection:
     enable: false  # Set to true to enable LLM-based anomaly detection

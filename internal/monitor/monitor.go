@@ -187,8 +187,9 @@ func (m *TrafficMonitor) pollAndSend() {
 			}
 		}
 
-		// Check for TLS sample in cache
-		if tlsHex, ok := m.tlsCache.Pop(ueIp); ok {
+		// Check for TLS sample in cache (Sticky State: data persists across windows)
+		// If UE reconnects and sends new Hello, eBPF will update the cache automatically
+		if tlsHex, ok := m.tlsCache.Get(ueIp); ok {
 			record.HasTlsSample = true
 			record.TlsHelloHex = tlsHex
 			logger.MonitorLog.Debugf("Added TLS sample for UE %s: %d bytes", ueIp, len(tlsHex)/2)

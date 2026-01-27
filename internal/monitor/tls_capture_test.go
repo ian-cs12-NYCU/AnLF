@@ -11,27 +11,43 @@ import (
 func TestTlsEventCache(t *testing.T) {
 	cache := NewTlsEventCache()
 
-	// Test basic add and pop
+	// Test basic add and get (Sticky State)
 	cache.Add("10.60.0.1", "160301")
-	val, ok := cache.Pop("10.60.0.1")
+	val, ok := cache.Get("10.60.0.1")
 	if !ok {
-		t.Fatal("Failed to pop cache value")
+		t.Fatal("Failed to get cache value")
 	}
 	if val != "160301" {
 		t.Fatalf("Expected '160301', got %s", val)
 	}
 
-	// Test pop on empty cache
-	val, ok = cache.Pop("10.60.0.1")
+	// Test get again - data should still be there (not deleted)
+	val, ok = cache.Get("10.60.0.1")
+	if !ok {
+		t.Fatal("Data should persist after Get")
+	}
+	if val != "160301" {
+		t.Fatalf("Expected '160301', got %s", val)
+	}
+
+	// Test get on non-existent key
+	val, ok = cache.Get("10.60.0.99")
 	if ok {
 		t.Fatal("Should return ok=false for non-existent key")
 	}
 
-	// Test multiple entries
+	// Test multiple entries and update
 	cache.Add("10.60.0.2", "aabbcc")
 	cache.Add("10.60.0.3", "ddeeff")
-	if cache.Len() != 2 {
-		t.Fatalf("Expected 2 entries, got %d", cache.Len())
+	cache.Add("10.60.0.1", "new_hex") // Update existing entry
+	if cache.Len() != 3 {
+		t.Fatalf("Expected 3 entries, got %d", cache.Len())
+	}
+
+	// Verify update worked
+	val, _ = cache.Get("10.60.0.1")
+	if val != "new_hex" {
+		t.Fatalf("Expected 'new_hex' after update, got %s", val)
 	}
 }
 
@@ -44,7 +60,7 @@ func TestTlsEventCacheConcurrency(t *testing.T) {
 	go func() {
 		for i := 0; i < 100; i++ {
 			cache.Add("10.60.0.1", "160301")
-			cache.Pop("10.60.0.1")
+			cache.Get("10.60.0.1")
 		}
 		done <- true
 	}()
@@ -52,7 +68,7 @@ func TestTlsEventCacheConcurrency(t *testing.T) {
 	go func() {
 		for i := 0; i < 100; i++ {
 			cache.Add("10.60.0.2", "aabbcc")
-			cache.Pop("10.60.0.2")
+			cache.Get("10.60.0.2")
 		}
 		done <- true
 	}()
